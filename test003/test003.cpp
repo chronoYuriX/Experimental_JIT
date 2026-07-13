@@ -1,5 +1,3 @@
-//#pragma optimize(0)
-
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -115,9 +113,7 @@ void calcOP(EXEMEM_STRUCT& sEXEmem, BYTE sourceID, BYTE destID, BYTE operation) 
 	sEXEmem.command(1, regBYTE);
 }
 void addconst(EXEMEM_STRUCT& sEXEmem, float floatconst, DWORD EXEsize, DWORD& counter) {
-	wprintf(L"  ----counter: %d\n", counter);
 	((float*)(sEXEmem.EXEmem + EXEsize))[counter++] = floatconst;
-	wprintf(L"  ----counter: %d\n", counter);
 }
 void loadconst(EXEMEM_STRUCT& sEXEmem, BYTE destID, DWORD EXEsize, DWORD constID) {
 	sEXEmem.command("F3 0F 10");
@@ -166,14 +162,9 @@ struct JIT_COMMANDER {
 		return JIT::NOT_HERE;
 	}
 	DWORD __newconst(float val) {
-		wprintf(L"  --miniStep.1\n");
-		wprintf(L"  ----const_count: %d\n", const_count);
 		for (DWORD i = 0; i < const_count; i++) if (val == consts[i]) return i;
-		wprintf(L"  --miniStep.2\n");
 		DWORD cur_const_count = const_count;
-		wprintf(L"  --miniStep.3\n");
 		addconst(sEXEmem, val, EXEsize, const_count);
-		wprintf(L"  --miniStep.4\n");
 		return cur_const_count;
 	}
 	BYTE __findfreereg() {
@@ -184,15 +175,10 @@ struct JIT_COMMANDER {
 	void set_v_var(const char* name, float val) {
 		using namespace JIT;
 		DWORD varID = __findvar(name);
-		wprintf(L"  miniStep.1\n");
 		if (varID == NOT_HERE) {
-			wprintf(L"  miniStep.2\n");
 			DWORD loadfrom = __newconst(val);
-			wprintf(L"  miniStep.3\n");
 			strcpy(v_vars[v_var_count].name, name);
-			wprintf(L"  miniStep.4\n");
 			BYTE freereg = __findfreereg();
-			wprintf(L"  miniStep.5\n");
 			if (freereg == ALL_REGS_FULL) {
 				loadconst(sEXEmem, RESERVED_REG_ID, EXEsize, loadfrom);
 				memOP(sEXEmem, RESERVED_REG_ID, stack_count * sizeof(float), SAVE);
@@ -203,11 +189,9 @@ struct JIT_COMMANDER {
 				v_vars[v_var_count].REGloc = freereg;
 				v_vars[v_var_count].MEMloc = I_DONT_CARE;
 				v_vars[v_var_count].state = AT_REG;
-				wprintf(L"  miniStep.6\n");
 				loadconst(sEXEmem, freereg, EXEsize, loadfrom);
 			}
 			v_var_count++;
-			wprintf(L"  miniStep.7\n");
 		} else {
 			switch (v_vars[varID].state) {
 				case AT_REG: case AT_BOTH: case AT_BOTH_ASYNC: {
@@ -257,7 +241,7 @@ struct JIT_COMMANDER {
 						break;
 					} case NOWHERE: reportERROR(L"Invalid variable state ( while calculating )"); break;
 				}
-				if (v_vars[destID].state == AT_BOTH) v_vars[soueceID].state = AT_BOTH_ASYNC;
+				if (v_vars[destID].state == AT_BOTH) v_vars[destID].state = AT_BOTH_ASYNC;
 				break;
 			} case AT_STACK: {
 				BYTE freereg = __findfreereg();
@@ -325,10 +309,10 @@ struct JIT_COMMANDER {
 		using namespace JIT;
 		DWORD retID = __findvar(ret_name);
 		if (retID == NOT_HERE) reportERROR(L"Undefined variable name ( while finishing )");
-		else if (v_vars[retID].REGloc != 0){
+		else {
 			switch (v_vars[retID].state) {
 				case AT_REG: case AT_BOTH: case AT_BOTH_ASYNC:
-					calcOP(sEXEmem, v_vars[retID].REGloc, 0, COPY); break;
+					if (v_vars[retID].REGloc != 0) calcOP(sEXEmem, v_vars[retID].REGloc, 0, COPY); break;
 				case AT_STACK: memOP(sEXEmem, 0, v_vars[retID].MEMloc * sizeof(float), LOAD); break;
 				case NOWHERE: reportERROR(L"Invalid variable state ( while finishing )"); break;
 			}
@@ -373,21 +357,21 @@ BYTE* compile(DWORD vercount, DWORD EXEsize, DWORD constsize, DWORD stacksize) {
 BYTE* compile2(DWORD vercount, DWORD EXEsize, DWORD constsize, DWORD stacksize) {
 	using namespace JIT;
 	JIT_COMMANDER jit(16, EXEsize, constsize, stacksize);
-	jit.new_v_var("val_1");               wprintf(L"Step.1\n");
-	jit.new_v_var("val_2");               wprintf(L"Step.2\n");
-	jit.calc_v_vars("val_1", "x", COPY);  wprintf(L"Step.3\n");
-	jit.calc_v_vars("val_2", "y", COPY);  wprintf(L"Step.4\n");
-	jit.calc_v_vars("x", "x", MUL);       wprintf(L"Step.5\n");
-	jit.calc_v_vars("y", "y", MUL);       wprintf(L"Step.6\n");
-	jit.calc_v_vars("x", "y", ADD);       wprintf(L"Step.7\n");
-	jit.calc_v_vars("x", NULL, SQRT);     wprintf(L"Step.8\n");
-	jit.calc_v_vars("x", "val_1", ADD);   wprintf(L"Step.9\n");
-	jit.calc_v_vars("x", "val_2", ADD);   wprintf(L"Step.10\n");
-	jit.set_v_var("const_1", 10.f);       wprintf(L"Step.11\n");
-	jit.set_v_var("const_2", 9.f);        wprintf(L"Step.12\n");
-	jit.calc_v_vars("x", "const_1", MUL); wprintf(L"Step.13\n");
-	jit.calc_v_vars("x", "const_2", ADD); wprintf(L"Step.14\n");
-	jit.finish("x");                      wprintf(L"Step.15\n");
+	jit.new_v_var("val_1");
+	jit.new_v_var("val_2");
+	jit.calc_v_vars("val_1", "x", COPY);
+	jit.calc_v_vars("val_2", "y", COPY);
+	jit.calc_v_vars("x", "x", MUL);
+	jit.calc_v_vars("y", "y", MUL);
+	jit.calc_v_vars("x", "y", ADD);
+	jit.calc_v_vars("x", NULL, SQRT);
+	jit.calc_v_vars("x", "val_1", ADD);
+	jit.calc_v_vars("x", "val_2", ADD);
+	jit.set_v_var("const_1", 10.f);
+	jit.set_v_var("const_2", 9.f);
+	jit.calc_v_vars("x", "const_1", MUL);
+	jit.calc_v_vars("x", "const_2", ADD);
+	jit.finish("x");
 	wprintf(L"(2) Code section:\n"); showHEX(jit.sEXEmem.EXEmem, jit.sEXEmem.count, 16);
 	wprintf(L"(2) Const section:\n"); showHEX(jit.sEXEmem.EXEmem + jit.EXEsize, jit.const_count * sizeof(float), 16);
 	return jit.sEXEmem.EXEmem;
@@ -395,21 +379,128 @@ BYTE* compile2(DWORD vercount, DWORD EXEsize, DWORD constsize, DWORD stacksize) 
 
 // ### tests ###########################################################################################################
 typedef float (*JITfunc)(float, float);
-void test_compile() {
-	BYTE* EXEmem = compile(8, 256, 64, 16);
-    JITfunc func = (JITfunc)EXEmem;
-    printf("compile: (sqrt(3 * 3 + 4 * 4) + 3 + 4) * 10 + 9 = %.2f (expect 129.00)\n\n", func(3.f, 4.f));
-    VirtualFree(EXEmem, 0, MEM_RELEASE);
+BYTE* compile_test_swap(const char* code, DWORD vercount, DWORD EXEsize, DWORD constsize, DWORD stacksize) {
+    using namespace JIT;
+    JIT_COMMANDER jit(16, EXEsize, constsize, stacksize);
+
+    // 创建 8 个变量（超过 7 个可用寄存器）
+    jit.new_v_var("a");  // 分配 xmm2
+    jit.new_v_var("b");  // 分配 xmm3
+    jit.new_v_var("c");  // 分配 xmm4
+    jit.new_v_var("d");  // 分配 xmm5
+    //jit.new_v_var("e");  // 分配 xmm6
+    //jit.new_v_var("f");  // 分配 xmm7? 不，xmm7 是保留寄存器，所以这里会触发 forceSWSP！
+
+    // 设置值
+    jit.set_v_var("a", 1.f);
+    jit.set_v_var("b", 2.f);
+    jit.set_v_var("c", 3.f);
+    jit.set_v_var("d", 4.f);
+    //jit.set_v_var("e", 5.f);
+    //jit.set_v_var("f", 6.f);  // 这里应该触发 forceSWSP
+
+    // 做一些计算
+    jit.calc_v_vars("a", "b", ADD);  // a = a + b
+    jit.calc_v_vars("c", "d", ADD);  // c = c + d
+    //jit.calc_v_vars("e", "f", ADD);  // e = e + f
+
+    // 返回结果
+    jit.finish("a");  // 返回 a = 1 + 2 = 3
+
+    wprintf(L"(Swap Test 1) Code section:\n");
+    showHEX(jit.sEXEmem.EXEmem, jit.sEXEmem.count, 16);
+    wprintf(L"(Swap Test 1) Const section:\n");
+    showHEX(jit.sEXEmem.EXEmem + jit.EXEsize, jit.const_count * sizeof(float), 16);
+
+    return jit.sEXEmem.EXEmem;
 }
-void test_compile2() {
-	BYTE* EXEmem = compile2(8, 256, 64, 16);
-    JITfunc func = (JITfunc)EXEmem;
-    printf("compile: (sqrt(3 * 3 + 4 * 4) + 3 + 4) * 10 + 9 = %.2f (expect 129.00)\n\n", func(3.f, 4.f));
-    VirtualFree(EXEmem, 0, MEM_RELEASE);
+BYTE* compile_test_async(const char* code, DWORD vercount, DWORD EXEsize, DWORD constsize, DWORD stacksize) {
+    using namespace JIT;
+    JIT_COMMANDER jit(16, EXEsize, constsize, stacksize);
+
+    // 创建几个变量
+    jit.new_v_var("acc");
+    jit.new_v_var("temp");
+
+    // 设置初始值
+    jit.set_v_var("acc", 0.f);
+    jit.set_v_var("temp", 1.f);
+
+    // 多次使用 acc，使其在 AT_BOTH 和 AT_BOTH_ASYNC 之间切换
+    jit.calc_v_vars("acc", "temp", ADD);  // acc = temp + acc
+    jit.set_v_var("acc", 5.f);             // 重新设置 acc → 触发 AT_BOTH_ASYNC
+    jit.calc_v_vars("acc", "temp", ADD);  // acc = temp + acc → 触发 SWAPsomething
+
+    jit.finish("acc");
+
+    wprintf(L"(Async Test) Code section:\n");
+    showHEX(jit.sEXEmem.EXEmem, jit.sEXEmem.count, 16);
+
+    return jit.sEXEmem.EXEmem;
+}
+BYTE* compile_test_complex(const char* code, DWORD vercount, DWORD EXEsize, DWORD constsize, DWORD stacksize) {
+    using namespace JIT;
+    JIT_COMMANDER jit(16, EXEsize, constsize, stacksize);
+
+    // 创建大量变量模拟复杂计算
+    jit.new_v_var("v1");
+    jit.new_v_var("v2");
+    jit.new_v_var("v3");
+    jit.new_v_var("v4");
+    jit.new_v_var("v5");
+
+    // 设置值
+    jit.set_v_var("v1", 10.f);
+    jit.set_v_var("v2", 20.f);
+    jit.set_v_var("v3", 30.f);
+    jit.set_v_var("v4", 40.f);
+    jit.set_v_var("v5", 50.f);
+
+    // 复杂计算链
+    jit.calc_v_vars("v2", "v1", ADD);   // v2 = 10+20 = 30
+    jit.calc_v_vars("v4", "v3", ADD);   // v4 = 30+40 = 70
+    jit.calc_v_vars("v4", "v2", MUL);   // v4 = 30 * 70 = 2100
+    jit.calc_v_vars("v4", "v5", ADD);   // v4 = 50+2100 = 2150
+    jit.calc_v_vars("v4", "v1", SUB);   // v1 = 2150-10 = 2140
+
+    jit.finish("v4");  // 返回 2140
+
+    wprintf(L"(Complex Test) Code section:\n");
+    showHEX(jit.sEXEmem.EXEmem, jit.sEXEmem.count, 16);
+
+    return jit.sEXEmem.EXEmem;
 }
 
 int main() {
-	test_compile();
-	test_compile2();
+    // 原始测试
+    BYTE* EXEmem = compile(64, 2048, 128, 512);
+    JITfunc func = (JITfunc)EXEmem;
+    printf("Original: (sqrt(3 * 3+4 * 4)+3+4)*10+9 = %.2f (expect 129.00)\n\n", func(3.f, 4.f));
+    VirtualFree(EXEmem, 0, MEM_RELEASE);
+
+    // compile2 测试
+    EXEmem = compile2(64, 2048, 128, 512);
+    func = (JITfunc)EXEmem;
+    printf("compile2: (sqrt(3 * 3+4 * 4)+3+4)*10+9 = %.2f (expect 129.00)\n\n", func(3.f, 4.f));
+    VirtualFree(EXEmem, 0, MEM_RELEASE);
+
+    // Swap 测试 1：大量变量
+    EXEmem = compile_test_swap("", 64, 2048, 128, 512);
+    func = (JITfunc)EXEmem;
+    printf("Swap Test 1 (many vars): result = %.2f (expect 3.00)\n\n", func(0.f, 0.f));
+    VirtualFree(EXEmem, 0, MEM_RELEASE);
+
+    // Swap 测试 2：异步状态
+    EXEmem = compile_test_async("", 64, 2048, 128, 512);
+    func = (JITfunc)EXEmem;
+    printf("Async Test: result = %.2f (expect 6.00)\n\n", func(0.f, 0.f));
+    VirtualFree(EXEmem, 0, MEM_RELEASE);
+
+    // Swap 测试 3：复杂表达式
+    EXEmem = compile_test_complex("", 64, 2048, 128, 512);
+    func = (JITfunc)EXEmem;
+    printf("Complex Test: result = %.2f (expect 2140.00)\n\n", func(0.f, 0.f));
+    VirtualFree(EXEmem, 0, MEM_RELEASE);
+
     return 0;
 }
