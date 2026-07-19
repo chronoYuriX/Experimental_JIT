@@ -226,6 +226,7 @@ struct JIT_COMMANDER {
 		using namespace JIT;
 		bool swapped = 0;
 		for (DWORD i = 0; i < v_var_count; i++) if (v_vars[i].state == AT_BOTH_ASYNC || v_vars[i].state == AT_BOTH) {
+			memOP(sEXEmem, v_vars[i].REGloc, v_vars[i].MEMloc * sizeof(float), SAVE);
 			v_vars[i].state = AT_STACK;
 			registers[v_vars[i].REGloc] = FREE;
 			swapped = 1;

@@ -71,6 +71,11 @@ struct EXEMEM_STRUCT {
 		memcpy(EXEmem + count, bytes, sizeof(int));
 		count += sizeof(int);
 	}
+	inline void data64(long long longval) {
+		BYTE* bytes = (BYTE*)&longval;
+		memcpy(EXEmem + count, bytes, sizeof(long long));
+		count += sizeof(long long);
+	}
 };
 
 // ### func generation 2 ###############################################################################################
@@ -112,22 +117,27 @@ void calcOP(EXEMEM_STRUCT& stEXEmem, BYTE sourceID, BYTE destID, BYTE operation)
 	BYTE regBYTE = 0xC0 | ((sourceID & 0x07) << 3) | (destID & 0x07);
 	stEXEmem.command(1, regBYTE);
 }
-void addconst(EXEMEM_STRUCT& stEXEmem, float floatconst, DWORD EXEsize, DWORD* counter) {
+void addconstJA(EXEMEM_STRUCT& stEXEmem, float floatconst, DWORD EXEsize, DWORD* counter) {
 	((float*)(stEXEmem.EXEmem + EXEsize))[(*counter)++] = floatconst;
 }
-void loadconst(EXEMEM_STRUCT& stEXEmem, BYTE destID, DWORD EXEsize, DWORD constID) {
+void loadconstJA(EXEMEM_STRUCT& stEXEmem, BYTE destID, DWORD EXEsize, DWORD constID) {
 	stEXEmem.command("F3 0F 10");
-	BYTE regBYTE = (destID << 3) | 0x05; // 00___101: RIP + disp32
+	BYTE regBYTE = ((destID & 0x07) << 3) | 0x05; // 00___101: RIP + disp32
 	stEXEmem.command(1, regBYTE);
 	stEXEmem.data(EXEsize + constID * sizeof(float) - stEXEmem.count - sizeof(int));
 }
-void finishOP(EXEMEM_STRUCT& stEXEmem) {
-	stEXEmem.command("C3");
+void callfuncJA(EXEMEM_STRUCT& stEXEmem, void* func) {
+	stackOP(stEXEmem, JIT::ALLOC, 40); // 32 shadow space + 8 padding
+	stEXEmem.command("48 B8"); // mov rax, imm64
+	stEXEmem.data64(*(long long*)&func);
+	stEXEmem.command("FF D0"); // call rax
+	stackOP(stEXEmem, JIT::RECOVER, 40);
 }
+void finishOP(EXEMEM_STRUCT& stEXEmem) { stEXEmem.command("C3"); }
 
 // ### func generation 3 ###############################################################################################
 namespace JIT {
-	const BYTE AT_REG = 1, AT_STACK = 2, INVALID = 3, FREE = 4, OCCUPIED = 5, FULL = ~0, MAX_REGS = 4;
+	const BYTE AT_REG = 1, AT_STACK = 2, INVALID = 3, FREE = 4, OCCUPIED = 5, FULL = ~0, MAX_REGS = 8;
 	const DWORD I_DONT_CARE = ~0, MAX_VARS = 64, MAX_CONSTS = 64, MAX_VAR_NAME = 16, MAX_CODE = 64;
 }
 struct JITvar {
@@ -141,18 +151,22 @@ struct JITvar {
 };
 
 namespace JIT {
-	const BYTE NEW = 1, CALC = 2, SETCONST = 3, FINISH = 4;
+	const BYTE NEW = 1, CALC = 2, SETCONST = 3, CALLFUNC = 4, FINISH = 5;
 	const char VOID_NAME[] = "__void";
 }
 struct JITcode {
-	BYTE op, mode;
+	BYTE  op, mode;
 	float data;
-	char var_source[JIT::MAX_VAR_NAME], var_dest[JIT::MAX_VAR_NAME];
+	void* funcptr;
+	char  var_source[JIT::MAX_VAR_NAME], var_dest[JIT::MAX_VAR_NAME], var_addition[JIT::MAX_VAR_NAME];
 };
 struct lsJITcode {
-	DWORD len;
-	JITcode code[JIT::MAX_CODE];
-	lsJITcode(): len(0) { }
+	DWORD    len;
+	JITcode* code;
+	lsJITcode(DWORD max_len): len(0) {
+		code = (JITcode*)VirtualAlloc(NULL, max_len * sizeof(JITcode), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	}
+	~lsJITcode() { VirtualFree(code, 0, MEM_RELEASE); }
 	void newvar(const char* name) {
 		strcpy(code[len].var_source, name); strcpy(code[len].var_dest, JIT::VOID_NAME); code[len++].op = JIT::NEW;
 	}
@@ -166,26 +180,44 @@ struct lsJITcode {
 		strcpy(code[len].var_source, source); strcpy(code[len].var_dest, JIT::VOID_NAME);
 		code[len].op = JIT::SETCONST; code[len++].data = floatconst;
 	}
-	void finish(const char* ret) {
-		strcpy(code[len].var_source, ret); code[len++].op = JIT::FINISH;
+	void callfunc(void* func, const char* result, const char* var_1, const char* var_2) {
+		strcpy(code[len].var_addition, result); strcpy(code[len].var_source, var_1);
+		if (var_2 == NULL) strcpy(code[len].var_dest, JIT::VOID_NAME);
+		else strcpy(code[len].var_dest, var_2);
+		code[len].op = JIT::CALLFUNC; code[len++].funcptr = func;
 	}
+	void finish(const char* ret) { strcpy(code[len].var_source, ret); code[len++].op = JIT::FINISH; }
 };
 
 struct lsJITvar {
 	BYTE          regs[JIT::MAX_REGS];
-	DWORD         code_size, const_size, stack_size, var_counter, const_counter, stack_counter, step_counter;
-	JITvar        vars[JIT::MAX_VARS];
-	float         consts[JIT::MAX_CONSTS];
+	DWORD         code_size, const_size, stack_size, var_counter, const_counter, stack_counter, max_vars;
+	JITvar*       vars;
+	float*        consts;
+	BYTE*         shared_mem;
 	EXEMEM_STRUCT stEXEmem;
-	lsJITvar(DWORD code_size, DWORD const_size, DWORD stack_size): var_counter(2), const_counter(0), stack_counter(0),
-			code_size(code_size), const_size(const_size), stack_size(stack_size), stEXEmem(code_size + const_size),
-			step_counter(0) {
+	lsJITvar(DWORD code_size, DWORD const_size, DWORD stack_size, DWORD max_vars): var_counter(2), const_counter(0),
+			stack_counter(0), code_size(code_size), const_size(const_size), stack_size(stack_size),
+			stEXEmem(code_size + const_size) {
 		using namespace JIT;
+		shared_mem = (BYTE*)VirtualAlloc(
+			NULL, max_vars * sizeof(JITvar) + const_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		vars = (JITvar*)shared_mem;
+		consts = (float*)(shared_mem + max_vars * sizeof(JITvar));
 		vars[0] = JITvar(AT_REG, 0, I_DONT_CARE, "x");
 		vars[1] = JITvar(AT_REG, 1, I_DONT_CARE, "y");
 		regs[0] = regs[1] = OCCUPIED;
 		memset(regs + 2, FREE, MAX_REGS - 2);
 		stackOP(stEXEmem, ALLOC, stack_size);
+	}
+	~lsJITvar() {
+		if (stEXEmem.EXEmem != NULL) {
+			VirtualFree(stEXEmem.EXEmem, 0, MEM_RELEASE);
+			stEXEmem.EXEmem = NULL;
+		} if (shared_mem != NULL) {
+			VirtualFree(shared_mem, 0, MEM_RELEASE);
+			shared_mem = NULL;
+		} vars = NULL; consts = NULL;
 	}
 	BYTE find_free_reg() {
 		using namespace JIT;
@@ -238,10 +270,30 @@ struct lsJITvar {
 		for (; constID < const_counter; constID++) if (consts[constID] == floatconst) { notfound = 0; break; }
 		if (notfound) {
 			consts[const_counter] = floatconst;
-			addconst(stEXEmem, floatconst, code_size, &const_counter);
+			addconstJA(stEXEmem, floatconst, code_size, &const_counter);
 		}
-		loadconst(stEXEmem, regID, code_size, constID);
+		loadconstJA(stEXEmem, regID, code_size, constID);
 		regs[regID] = JIT::OCCUPIED;
+	}
+	void call_func(void* func, const char* result, const char* arg_1, const char* arg_2) {
+		using namespace JIT;
+		bool copy_1 = 1, copy_2 = strcmp(arg_2, VOID_NAME) != 0;
+		for (DWORD i = 0; i < var_counter; i++) if (vars[i].state == AT_REG && vars[i].regID < 6) {
+			if (copy_1 && strcmp(vars[i].name, arg_1) == 0 && vars[i].regID == 0) copy_1 = 0;
+			else if (copy_2 && strcmp(vars[i].name, arg_2) == 0 && vars[i].regID == 1) copy_2 = 0;
+			if (vars[i].stackID == I_DONT_CARE) vars[i].stackID = stack_counter++;
+			memOP(stEXEmem, vars[i].regID, vars[i].stackID * sizeof(float), SAVE);
+			vars[i].state = AT_STACK;
+		} // save xmm0 ~ xmm5
+		memset(regs + 1, FREE, 5);
+		regs[0] = OCCUPIED;
+		if (copy_1) memOP(stEXEmem, 0, vars[find_var(arg_1)].stackID, LOAD);
+		if (copy_2) memOP(stEXEmem, 1, vars[find_var(arg_2)].stackID, LOAD);
+		callfuncJA(stEXEmem, func);
+		DWORD resultID = find_var(result);
+		if (vars[resultID].state == AT_STACK) memOP(stEXEmem, 0, vars[resultID].stackID, SAVE);
+		else if (vars[resultID].state == AT_REG) calcOP(stEXEmem, vars[resultID].regID, 0, COPY);
+		else reportERROR(L"Uninitialized variable");
 	}
 	BYTE* finish(const char* name) {
 		using namespace JIT;
@@ -256,6 +308,7 @@ struct lsJITvar {
 	}
 };
 
+// ### func generation 4 ###############################################################################################
 struct PRE_COMPILE_VAR {
 	char name[JIT::MAX_VAR_NAME];
 	DWORD start, end;
@@ -277,9 +330,10 @@ __fastcall void pre_compile_sort(DWORD* arr, DWORD* mirror, int32_t left, int32_
 	pre_compile_sort(arr, mirror, left, mid - 1);
 	pre_compile_sort(arr, mirror, mid + 1, right);
 }
-void pre_compile(const lsJITcode* source, lsJITvar* dest) {
+void pre_compile(const lsJITcode* source, lsJITvar* dest, DWORD max_vars) {
 	using namespace JIT;
-	PRE_COMPILE_VAR vars_pre[MAX_VARS];
+	PRE_COMPILE_VAR* vars_pre = (PRE_COMPILE_VAR*)VirtualAlloc(
+		NULL, max_vars * sizeof(PRE_COMPILE_VAR), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	DWORD var_counter_pre = 0;
 	for (DWORD i = 0; i < source->len; i++) {
 		for (DWORD j = 0; j < var_counter_pre; j++) if (strcmp(vars_pre[j].name, source->code[i].var_source) == 0 ||
@@ -293,10 +347,11 @@ void pre_compile(const lsJITcode* source, lsJITvar* dest) {
 	for (DWORD i = 0; i < var_counter_pre; i++) { sortby[i] = vars_pre[i].end; index[i] = i; }
 	pre_compile_sort(sortby, index, 0, (int32_t)var_counter_pre - 1);
 	for (DWORD i = 0; i < var_counter_pre; i++) dest->new_var(vars_pre[index[i]].name);
+	VirtualFree(vars_pre, 0, MEM_RELEASE);
 }
-BYTE* compile(lsJITcode* source, lsJITvar* dest) {
+BYTE* compile(lsJITcode* source, lsJITvar* dest, DWORD max_vars) {
 	using namespace JIT;
-	pre_compile(source, dest);
+	pre_compile(source, dest, max_vars);
 	for (DWORD i = 0; i < source->len; i++) {
 		switch (source->code[i].op) {
 			case NEW: {
@@ -313,7 +368,10 @@ BYTE* compile(lsJITcode* source, lsJITvar* dest) {
 				BYTE regID = dest->swap_back(source->code[i].var_source, (BYTE)I_DONT_CARE);
 				dest->load_const(regID, source->code[i].data);
 				break;
-			} case FINISH: return dest->finish(source->code[i].var_source);
+			} case CALLFUNC: dest->call_func(
+				source->code[i].funcptr, source->code[i].var_addition, source->code[i].var_source,
+				source->code[i].var_dest); break;
+			case FINISH: return dest->finish(source->code[i].var_source);
 			default: reportERROR(L"Unknown code");
 		}
 	}
@@ -324,19 +382,20 @@ BYTE* compile(lsJITcode* source, lsJITvar* dest) {
 typedef float (*func2F_F)(float, float);
 void test() {
 	using namespace JIT;
-	lsJITcode code;
-	lsJITvar  vars(1024, 256, 256);
-	
+	const DWORD max_vars = 64;
+	lsJITcode code(256);
+	lsJITvar  vars(1024, 256, 256, 64);
+
 	code.newvar("m");
 	code.calc(COPY, "m", "x");
 	code.newvar("n");
 	code.calc(COPY, "n", "y");
-	
+
 	code.calc(MUL, "x", "x");
 	code.calc(MUL, "y", "y");
 	code.calc(ADD, "x", "y");
 	code.calc(SQRT, "x", NULL);
-	
+
 	code.calc(ADD, "x", "m");
 	code.calc(ADD, "x", "n");
 
@@ -348,19 +407,19 @@ void test() {
 	code.calc(ADD, "x", "b");
 
 	code.finish("x");
-	BYTE* EXEmem = compile(&code, &vars);
+	BYTE* EXEmem = compile(&code, &vars, max_vars);
 	func2F_F func = (func2F_F)EXEmem;
 	wprintf(L"Code section:\n"); showHEX(EXEmem, vars.stEXEmem.count, 16);
 	wprintf(L"Const section:\n"); showHEX(EXEmem + vars.code_size, vars.const_counter * sizeof(float), 16);
 	wprintf(L"compile: (sqrt(3 * 3 + 4 * 4) + 3 + 4) * 10 + 9 = %.2f (expect 129.00)\n", func(3.f, 4.f));
-	VirtualFree(EXEmem, 0, MEM_RELEASE);
 }
 
 void test_overflow() {
 	using namespace JIT;
-	lsJITcode code;
-	lsJITvar  vars(1024, 256, 256);
-	
+	const DWORD max_vars = 64;
+	lsJITcode code(256);
+	lsJITvar  vars(1024, 256, 256, max_vars);
+
 	code.newvar("a");
 	code.setconst("a", 3.f);
 	code.newvar("b");
@@ -375,7 +434,7 @@ void test_overflow() {
 	code.setconst("f", 8.f);
 	code.newvar("g");
 	code.setconst("g", 9.f);
-	
+
 	code.calc(ADD, "x", "y");
 	code.calc(ADD, "x", "a");
 	code.calc(ADD, "x", "b");
@@ -385,15 +444,33 @@ void test_overflow() {
 	code.calc(ADD, "x", "f");
 	code.calc(ADD, "x", "g");
 	code.finish("x");
-	
-	BYTE* EXEmem = compile(&code, &vars);
+
+	BYTE* EXEmem = compile(&code, &vars, max_vars);
 	func2F_F func = (func2F_F)EXEmem;
 	wprintf(L"Code section:\n"); showHEX(EXEmem, vars.stEXEmem.count, 16);
 	wprintf(L"Const section:\n"); showHEX(EXEmem + vars.code_size, vars.const_counter * sizeof(float), 16);
 	wprintf(L"compile: sigma 1~9 = %.2f (expect 45.00)\n", func(1.f, 2.f));
-	VirtualFree(EXEmem, 0, MEM_RELEASE);
 }
 
+float test_call_mul_add(float x, float y) { return x * y + x + y; }
+void test_call() {
+	using namespace JIT;
+	const DWORD max_vars = 64;
+	lsJITcode code(256);
+	lsJITvar  vars(1024, 256, 256, max_vars);
+	
+	code.newvar("unused");
+	code.setconst("unused", 114514.f);
+	code.calc(SUB, "unused", "x");
+	code.callfunc((void*)test_call_mul_add, "x", "x", "y");
+	code.finish("x");
+	
+	BYTE* EXEmem = compile(&code, &vars, max_vars);
+	func2F_F func = (func2F_F)EXEmem;
+	wprintf(L"Code section:\n"); showHEX(EXEmem, vars.stEXEmem.count, 16);
+	wprintf(L"Const section:\n"); showHEX(EXEmem + vars.code_size, vars.const_counter * sizeof(float), 16);
+	wprintf(L"compile: 4 * 5 + 4 + 5 = %.2f (expect 29.00)\n", func(4.f, 5.f));
+}
 
 
 
@@ -401,6 +478,7 @@ void test_overflow() {
 int main() {
 	test();
 	test_overflow();
+	test_call();
 	return 0;
 }
 
