@@ -10,8 +10,7 @@
 HANDLE __g_hheap = GetProcessHeap();
 typedef float (*func2F_F)(float, float);
 float ftest(float x, float y) {
-	//return y * sinf(x) - x * cosf(y) - 1.f;
-	return x*x*x - y*y*y + 6.f*x*y;
+	return y * sinf(x) - x * cosf(y) - 1.f;
 }
 #include "cyxlib.h"
 
@@ -23,8 +22,21 @@ inline void dot(POINT pos, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
 	if (range.left <= pos.x && pos.x < range.right && range.top <= pos.y && pos.y < range.bottom)
 		((BGRA*)bmp)[pos.y * bmp_x + pos.x] = color;
 }
+/*
 void straight(POINT p_1, POINT p_2, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
-    int32_t dx =  abs(p_2.x - p_1.x), sx = p_1.x < p_2.x ? 1 : -1;
+	POINT delta = { abs(p_2.x - p_1.x), -abs(p_2.y - p_1.y) },
+		op = { (p_1.x < p_2.x) ? 1 : -1, (p_1.y < p_2.y) ? 1 : -1 };
+	int32_t err = delta.x + delta.y, steps = 0;
+    while (steps++ < 100) {
+        dot(p_1, color, bmp, bmp_x, range);
+        if (((p_1.x ^ p_2.x) | (p_1.y ^ p_2.y)) == 0) return;
+        if ((err << 1) > delta.y) { err += delta.y; p_1.x += op.x; }
+		if ((err << 1) < delta.x) { err += delta.x; p_1.y += op.y; }
+    }
+	printf("p_1(%d, %d), p_2(%d, %d)\n", p_1.x, p_1.y, p_2.x, p_2.y);
+}*/
+void straight(POINT p_1, POINT p_2, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
+    int32_t dx = abs(p_2.x - p_1.x), sx = p_1.x < p_2.x ? 1 : -1;
     int32_t dy = -abs(p_2.y - p_1.y), sy = p_1.y < p_2.y ? 1 : -1;
     int32_t err = dx + dy, e2;
     while (1) {
@@ -49,10 +61,30 @@ struct RENDER_FUNC_INFO {
 inline LINEF march_map(BIT_FIELD key, bool* found) {
 	*found = 1;
 	switch (key.field) {
+  		/*
 		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
 		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
+		case _0b("1000"): case _0b("0111"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
+		case _0b("1011"): case _0b("0100"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
+		case _0b("1101"): case _0b("0010"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
+		case _0b("1110"): case _0b("0001"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
+		*/
+		/*
+		case 0x0C: case 0x03: return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
+		case 0x0A: case 0x05: return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
+		case 0x08: case 0x07: return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
+		case 0x0B: case 0x04: return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
+		case 0x0D: case 0x02: return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
+		case 0x0E: case 0x01: return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
+		*/
+		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
+		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
+		// case _0b("1000"): case _0b("0111"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
+		// case _0b("1011"): case _0b("0100"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
 		case _0b("1000"): case _0b("0111"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
 		case _0b("1011"): case _0b("0100"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
+		// case _0b("1101"): case _0b("0010"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
+		// case _0b("1110"): case _0b("0001"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
 		case _0b("1101"): case _0b("0010"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
 		case _0b("1110"): case _0b("0001"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
 	}
@@ -248,7 +280,7 @@ struct CALC_WINDOW {
 			info.bmp_x = window_size_x;
 			info.color = BGRA{ 0, 255, 0 };
 			info.magnify = 40.f;
-			info.max_depth = 1;
+			info.max_depth = 3;
 			info.range = RECT{ 0, 0, window_size_x, window_size_y };
 			info.offset = POINT{ window_size_x >> 1, window_size_y >> 1};
 			/*

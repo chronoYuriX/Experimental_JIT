@@ -10,8 +10,8 @@
 HANDLE __g_hheap = GetProcessHeap();
 typedef float (*func2F_F)(float, float);
 float ftest(float x, float y) {
-	//return y * sinf(x) - x * cosf(y) - 1.f;
-	return x*x*x - y*y*y + 6.f*x*y;
+	return y * sinf(x) - x * cosf(y) - 1.f;
+	//return -x/2.f - y;
 }
 #include "cyxlib.h"
 
@@ -23,10 +23,23 @@ inline void dot(POINT pos, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
 	if (range.left <= pos.x && pos.x < range.right && range.top <= pos.y && pos.y < range.bottom)
 		((BGRA*)bmp)[pos.y * bmp_x + pos.x] = color;
 }
+/*
 void straight(POINT p_1, POINT p_2, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
-    int32_t dx =  abs(p_2.x - p_1.x), sx = p_1.x < p_2.x ? 1 : -1;
-    int32_t dy = -abs(p_2.y - p_1.y), sy = p_1.y < p_2.y ? 1 : -1;
-    int32_t err = dx + dy, e2;
+	POINT delta = { abs(p_2.x - p_1.x), -abs(p_2.y - p_1.y) },
+		op = { (p_1.x < p_2.x) ? 1 : -1, (p_1.y < p_2.y) ? 1 : -1 };
+	int32_t err = delta.x + delta.y, steps = 0;
+    while (steps++ < 100) {
+        dot(p_1, color, bmp, bmp_x, range);
+        if (((p_1.x ^ p_2.x) | (p_1.y ^ p_2.y)) == 0) return;
+        if ((err << 1) > delta.y) { err += delta.y; p_1.x += op.x; }
+		if ((err << 1) < delta.x) { err += delta.x; p_1.y += op.y; }
+    }
+	printf("p_1(%d, %d), p_2(%d, %d)\n", p_1.x, p_1.y, p_2.x, p_2.y);
+}*/
+void straight(POINT p_1, POINT p_2, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
+    int32_t dx = abs(p_2.x - p_1.x), sx = p_1.x < p_2.x ? 1 : -1,
+		dy = -abs(p_2.y - p_1.y), sy = p_1.y < p_2.y ? 1 : -1,
+    	err = dx + dy, e2;
     while (1) {
         dot(p_1, color, bmp, bmp_x, range);
         if (p_1.x == p_2.x && p_1.y == p_2.y) break;
@@ -51,8 +64,12 @@ inline LINEF march_map(BIT_FIELD key, bool* found) {
 	switch (key.field) {
 		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
 		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
+		// case _0b("1000"): case _0b("0111"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
+		// case _0b("1011"): case _0b("0100"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
 		case _0b("1000"): case _0b("0111"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
 		case _0b("1011"): case _0b("0100"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
+		// case _0b("1101"): case _0b("0010"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
+		// case _0b("1110"): case _0b("0001"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
 		case _0b("1101"): case _0b("0010"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
 		case _0b("1110"): case _0b("0001"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
 	}
@@ -64,7 +81,7 @@ void march_9_grid(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step, 
 	bool found;
 	LINEF march = march_map(_4_vals, &found);
 	if (!found) return;
-	if (depth >= info->max_depth) {
+	if (depth == info->max_depth) {
 		POINT p_1 = {
 			int32_t((start.x + march.S.x * step) * info->magnify) + info->offset.x,
 			int32_t((start.y + march.S.y * step) * info->magnify) + info->offset.y
@@ -93,27 +110,53 @@ void march_9_grid(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step, 
 }
 
 void render_func(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step) {
-	size_t line_size = size_t((end.x - start.x) / step) + 1;
-	bool* march_buffer_1 = (bool*)__builtin_alloca(line_size * (sizeof(bool) * 2 + sizeof(float)));
-	bool* march_buffer_2 = march_buffer_1 + line_size;
-	float* float_x_cache = (float*)(march_buffer_2 + line_size);
-	for (int32_t x = 0; x <= line_size; x++) {
-		march_buffer_2[x] = info->func(start.x + step * x, start.y) > 0;
-		float_x_cache[x] = start.x + step * x; // Prevent cumulative errors
-	}
-	size_t column_size = size_t((end.y - start.y) / step) + 1;
-	float last_y = start.y, current_y = start.y + step;
-	for (int32_t y = 1; y <= column_size; /* ++y's @ the end of the loop */ ) {
-		march_buffer_1[0] = info->func(start.x, current_y) > 0;
-		for (int32_t x = 1; x <= line_size; x++) {
-			march_buffer_1[x] = info->func(float_x_cache[x], current_y) > 0;
-			BIT_FIELD _4_vals;
-			_4_vals.set4(march_buffer_2[x - 1], march_buffer_2[x], march_buffer_1[x - 1], march_buffer_1[x]);
-			march_9_grid(info, { float_x_cache[x - 1], last_y }, { float_x_cache[x], current_y }, step, _4_vals, 0);
+	bool val_map[256][256];
+	float y = start.y;
+	int y_count = 0, x_count;
+	while (y <= end.y) {
+		float x = start.x;
+		x_count = 0;
+		while (x <= end.x) {
+			val_map[y_count][x_count++] = (info->func(x, y) > 0);
+			x += step;
 		}
-		last_y = current_y;
-		current_y = start.y + step * (++y);
-		exchange(march_buffer_1, march_buffer_2);
+		y_count++;
+		y += step;
+	}
+	float current_y = start.y;
+	for (int i = 0; i < y_count - 1; i++) {
+		float current_x = start.x;
+		for (int j = 0; j < x_count - 1; j++) {
+			BIT_FIELD _4_vals;
+			_4_vals.set4(val_map[i][j], val_map[i][j+1], val_map[i+1][j], val_map[i+1][j+1]);
+			bool found;
+			LINEF march = march_map(_4_vals, &found);
+			/*
+			{
+				POINT p = {
+					int32_t(current_x * info->magnify) + info->offset.x,
+					int32_t(current_y * info->magnify) + info->offset.y
+				};
+				if (info->func(current_x, current_y) > 0)
+					dot(p, BGRA{0, 0, 255}, info->bmp, info->bmp_x, info->range);
+				else
+					dot(p, BGRA{255, 0, 0}, info->bmp, info->bmp_x, info->range);
+			}
+			if (found) {
+				POINT p_1 = {
+					int32_t((current_x + march.S.x * step) * info->magnify) + info->offset.x,
+					int32_t((current_y + march.S.y * step) * info->magnify) + info->offset.y
+				}, p_2 = {
+					int32_t((current_x + march.E.x * step) * info->magnify) + info->offset.x,
+					int32_t((current_y + march.E.y * step) * info->magnify) + info->offset.y
+				};
+				straight(p_1, p_2, info->color, info->bmp, info->bmp_x, info->range);
+			}
+			*/
+			march_9_grid(info, {current_x, current_y}, {current_x + step, current_y + step}, step, _4_vals, 0);
+			current_x += step;
+		}
+		current_y += step;
 	}
 }
 
@@ -248,7 +291,7 @@ struct CALC_WINDOW {
 			info.bmp_x = window_size_x;
 			info.color = BGRA{ 0, 255, 0 };
 			info.magnify = 40.f;
-			info.max_depth = 1;
+			info.max_depth = 2;
 			info.range = RECT{ 0, 0, window_size_x, window_size_y };
 			info.offset = POINT{ window_size_x >> 1, window_size_y >> 1};
 			/*

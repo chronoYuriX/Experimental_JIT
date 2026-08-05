@@ -868,8 +868,11 @@ struct EXPR_COMPILER {
 	BYTE compile_expr(const char* expr) {
 		if(!setjmp(__g_compiler_jmp)) {
 			expr2token(expr, &tokens, &consts);
+			__showlog_once;
 			token2code(&tokens, &code, pfuncenv);
+			__showlog_once;
 			main_executable = (func2F_F)compile(&code, &vars, &consts);
+			__showlog_once;
 		} else return JIT::FAIL;
 		return JIT::PASS;
 	}
@@ -886,7 +889,6 @@ struct EXPR_COMPILER {
 };
 
 // ### testout #########################################################################################################
-/*
 #include <stdio.h>
 int main() {
 	EXPR_COMPILER_INFO info = {
@@ -903,10 +905,9 @@ int main() {
 	compiler.config("a", 1.f);
 	compiler.config("b", 2.f);
 	if (result == JIT::PASS) wprintf(L"compile: %.2f (expect 7.00)\n", compiler.run(2.f, 16.f));
- else wprintf(L"Error: %ls\n", __g_error_str);
+	else wprintf(L"Error: %ls\n", __g_error_str);
 	__showlog_once;
 	compiler.config("a", 3.f);
 	if (result == JIT::PASS) wprintf(L"compile: %.2f (expect 9.00)\n", compiler.run(2.f, 16.f));
 	return 0;
 }
-*/
