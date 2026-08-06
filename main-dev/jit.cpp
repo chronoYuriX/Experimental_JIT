@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include "non-crt-math.h"
 
-#define __JIT_DEBUG
+// #define __JIT_DEBUG
 
 // ### func generation 0 ###############################################################################################
 jmp_buf __g_compiler_jmp;
@@ -880,14 +880,60 @@ struct EXPR_COMPILER {
 	void cleanup() {
 		main_executable = NULL;
 		tokens.counter     = 0; consts.counter     = 0; code.counter     = 0;
-		vars.const_counter = 0; vars.stack_counter = 0; vars.var_counter = 0;
+		vars.const_counter = 0; vars.stack_counter = 0; vars.var_counter = 2;
 	}
 	inline float run(float x, float y) { return main_executable(x, y); }
 };
 
 // ### testout #########################################################################################################
-/*
+#ifdef __JIT_MAINEXECUTE
 #include <stdio.h>
+
+void showHEX(const BYTE* hex, DWORD len, BYTE in1line = 4) {
+	for (DWORD i = 0; i < len; i++) {
+		wprintf(L"%02X ", hex[i]);
+		if (i % in1line == in1line - 1) wprintf(L"\n");
+	}
+	wprintf(L"\n");
+}
+void showcode(lsJITcode* code) {
+	using namespace JIT;
+	for (DWORD i = 0; i < code->counter; i++) {
+		switch (code->code[i].op) {
+			case NEW: wprintf(L"New: %s\n", code->code[i].var_source); break;
+			case CALC: {
+				char mode;
+				switch (code->code[i].mode) {
+					case ADD:  mode = '+'; break; case SUB:  mode = '-'; break;
+					case MUL:  mode = '*'; break; case DIV:  mode = '/'; break;
+					case SQRT: mode = 'S'; break; case COPY: mode = 'C'; break;
+				}
+				wprintf(L"Calc: %s %c %s\n", code->code[i].var_source, mode, code->code[i].var_dest);
+				break;
+			} case SETCONST: wprintf(L"Set: %s = %.2f\n", code->code[i].var_source, code->code[i].data_f); break;
+			case SETCONST_IDP:
+				wprintf(L"Set(Independent): %s = %.2f\n", code->code[i].var_addition, code->code[i].data_f); break;
+			case CALLFUNC: wprintf(L"Call: %p\n", code->code[i].funcptr); break;
+			case FINISH: wprintf(L"Finish!\n"); break;
+		}
+	}
+}
+void showtoken(lsEXPRTOKEN* tokens) {
+	using namespace JIT;
+	for (DWORD i = 0; i < tokens->counter; i++) {
+		switch (tokens->tokens[i].type) {
+			case TRUE_CONST: wprintf(L"True const: %.2f\n", tokens->tokens[i].floatval); break;
+			case FAKE_CONST: wprintf(L"Fake const: %s\n", tokens->tokens[i].name); break;
+			case VARNAME: wprintf(L"Variable: %s\n", tokens->tokens[i].name); break;
+			case OPERATOR: wprintf(L"OP: %c\n", tokens->tokens[i].singlechar); break;
+			case FUNCNAME: wprintf(L"Function: %s\n", tokens->tokens[i].name); break;
+			case PAR_LEFT: wprintf(L"(\n"); break;
+			case PAR_RIGHT: wprintf(L")\n"); break;
+			case COMMA: wprintf(L",\n"); break;
+		}
+	}
+}
+
 int main() {
 	EXPR_COMPILER_INFO info = {
 		.max_tokens = 256,
@@ -899,14 +945,25 @@ int main() {
 		.external_env = NULL
 	};
 	EXPR_COMPILER compiler(&info);
+
 	BYTE result = compiler.compile_expr("log(x, y) + a + b");
 	compiler.config("a", 1.f);
 	compiler.config("b", 2.f);
-	if (result == JIT::PASS) wprintf(L"compile: %.2f (expect 7.00)\n", compiler.run(2.f, 16.f));
- else wprintf(L"Error: %ls\n", __g_error_str);
-	__showlog_once;
+	if (result == JIT::PASS) wprintf(L"result: %.2f (expect 7.00)\n", compiler.run(2.f, 16.f));
+	else wprintf(L"Error: %ls\n", __g_error_str);
 	compiler.config("a", 3.f);
-	if (result == JIT::PASS) wprintf(L"compile: %.2f (expect 9.00)\n", compiler.run(2.f, 16.f));
+	if (result == JIT::PASS) wprintf(L"result: %.2f (expect 9.00)\n", compiler.run(2.f, 16.f));
+
+	
+	compiler.cleanup();
+	result = compiler.compile_expr("(y * sin(x)) - (x * cos(y)) - 1");
+	showtoken(&(compiler.tokens));
+	showcode(&(compiler.code));
+	if (result == JIT::PASS) wprintf(L"result: %.2f (expect 7.00)\n", compiler.run(.5f, .8f));
+	else wprintf(L"Error: %ls\n", __g_error_str);
+	__showlog_once;
 	return 0;
 }
-*/
+
+#endif
+

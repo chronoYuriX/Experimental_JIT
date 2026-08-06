@@ -3,16 +3,20 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <math.h>
+// #include <math.h>
 
-//#define __JIT_DEBUG
-//#include "jit.h"
+// #define __JIT_DEBUG
+#include "jit.h"
+/*
 HANDLE __g_hheap = GetProcessHeap();
 typedef float (*func2F_F)(float, float);
+
 float ftest(float x, float y) {
-	//return y * sinf(x) - x * cosf(y) - 1.f;
-	return x*x*x - y*y*y + 6.f*x*y;
+	// return y * sinf(x) - x * cosf(y) - 1.f;
+	// return x*x*x - y*y*y + 6.f*x*y;
+	return x * sinf(x) - y * sinf(y);
 }
+*/
 #include "cyxlib.h"
 
 
@@ -55,12 +59,20 @@ inline LINEF march_map(BIT_FIELD key, bool* found) {
 		case _0b("1011"): case _0b("0100"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
 		case _0b("1101"): case _0b("0010"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
 		case _0b("1110"): case _0b("0001"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
+		case _0b("1001"): {
+			if (key.get(5)) return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
+            return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
+		} case _0b("0110"): {
+			if (key.get(5)) return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
+            return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
+		}
 	}
 	*found = 0;
 	return { 0 };
 }
 void march_9_grid(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step, BIT_FIELD _4_vals, BYTE depth) {
 	POINTF mid = { (start.x + end.x) * .5f, (start.y + end.y) * .5f };
+	if ((_4_vals.field == _0b("1001") || _4_vals.field == _0b("0110")) && info->func(mid.x, mid.y) > 0) _4_vals.set(5);
 	bool found;
 	LINEF march = march_map(_4_vals, &found);
 	if (!found) return;
@@ -119,7 +131,7 @@ void render_func(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step) {
 
 namespace CALC {
 	const UINT_PTR TIMER_RESIZE_BUFFER = 1;
-	const UINT TIMER_RESIZE_BUFFER_DELAY = 10000;
+	const UINT TIMER_RESIZE_BUFFER_DELAY = 10000, EXTERNAL_EXIT = 0x12345678;
 	const float BUFFER_OVERSIZE = 1.5f;
 }
 struct CALC_WINDOW {
@@ -131,8 +143,9 @@ struct CALC_WINDOW {
 	HBITMAP     window_hBMP;
 	BITMAPINFO  window_BMI;
 	PAINTSTRUCT window_PS;
+	HANDLE      hmainthread;
 	CALC_WINDOW(int32_t __window_size_x, int32_t __window_size_y): window_hwnd(NULL), window_buffer(NULL),
-			window_size_x(__window_size_x), window_size_y(__window_size_y), window_buffer_xy(0) {
+			hmainthread(NULL), window_size_x(__window_size_x), window_size_y(__window_size_y), window_buffer_xy(0) {
 		ZeroMemory(&window_BMI, sizeof(BITMAPINFO));
     	window_BMI.bmiHeader.biSize   = sizeof(BITMAPINFOHEADER);
     	window_BMI.bmiHeader.biWidth  =  __window_size_x; window_BMI.bmiHeader.biHeight   = -__window_size_y;
@@ -233,25 +246,21 @@ struct CALC_WINDOW {
 		else window_loc.y = mouse.y - (window_size_y >> 1);
 		return window_loc;
 	}
-	DWORD run() {
+	static DWORD WINAPI __calc_loop(LPVOID self) { return ((CALC_WINDOW*)self)->run(); }
+	DWORD WINAPI run() {
 		window_buffer_xy = (SIZE_T)window_size_x * window_size_y;
 		window_buffer = (BYTE*)HeapAlloc(__g_hheap, 0, window_buffer_xy * 4);
 		ZeroMemory(window_buffer, window_buffer_xy * 4);
 		{
-			/*
-			straight(POINT{ 10, 10 }, POINT{ 30, 20 }, POINT{ 0, 0}, BGRA{ 0, 255, 0 },
-				window_buffer, window_size_x, RECT{ 0, 0, window_size_x, window_size_y });
-			*/
-
 			RENDER_FUNC_INFO info;
 			info.bmp = window_buffer;
 			info.bmp_x = window_size_x;
 			info.color = BGRA{ 0, 255, 0 };
 			info.magnify = 40.f;
-			info.max_depth = 1;
+			info.max_depth = 4;
 			info.range = RECT{ 0, 0, window_size_x, window_size_y };
 			info.offset = POINT{ window_size_x >> 1, window_size_y >> 1};
-			/*
+
 			EXPR_COMPILER_INFO compiler_info = {
 				.max_tokens = 256,
 				.max_vars = 64,
@@ -262,13 +271,15 @@ struct CALC_WINDOW {
 				.external_env = NULL
 			};
 			EXPR_COMPILER compiler(&compiler_info);
-			BYTE result = compiler.compile_expr("sin(x) - y");
-			*/
-			//if (result == JIT::PASS) {
-				//info.func = compiler.main_executable;
-				info.func = ftest;
+
+			// BYTE result = compiler.compile_expr("x - y");
+			// BYTE result = compiler.compile_expr("x * sin(x) - y * sin(y)");
+			BYTE result = compiler.compile_expr("x * x * x - (y * y * y) + (6 * x * y)");
+			if (result == JIT::PASS) {
+				info.func = compiler.main_executable;
+				// info.func = ftest;
 				render_func(&info, { -15.f, -10.f }, { 15.f, 10.f }, .5f);
-			//} else wprintf(L"Error: %ls\n", __g_error_str);
+			} else wprintf(L"Error: %ls\n", __g_error_str);
 		}
 		wchar_t randname[256];
     	__randname(randname, L"CYX_CALC_", 255);
@@ -289,8 +300,38 @@ struct CALC_WINDOW {
         	TranslateMessage(&msg);
         	DispatchMessage (&msg);
     	}
+    	window_hwnd = NULL;
     	HeapFree(__g_hheap, 0, window_buffer);
     	return msg.wParam;
+	}
+	void run_async() { hmainthread = CreateThread(NULL, 0, __calc_loop, this, 0, NULL); }
+	void join() {
+		if (hmainthread == NULL) return;
+		WaitForSingleObject(hmainthread, INFINITE);
+        CloseHandle(hmainthread);
+        hmainthread = NULL;
+	}
+	bool isrunning() {
+		if (WaitForSingleObject(hmainthread, 0) == WAIT_OBJECT_0) {
+			if (hmainthread != NULL) {
+				CloseHandle(hmainthread);
+				hmainthread = NULL;
+			}
+			return 0;
+		}
+		return 1;
+	}
+	void exit(bool force) {
+        if (hmainthread == NULL) return;
+        if (force) TerminateProcess(hmainthread, CALC::EXTERNAL_EXIT);
+        else if (window_hwnd != NULL) PostMessage(window_hwnd, WM_CLOSE, 0, 0);
+        join();
+    }
+    void update() {
+		if (window_hwnd != NULL) {
+			InvalidateRect(window_hwnd, NULL, FALSE);
+			UpdateWindow(window_hwnd);
+		}
 	}
 };
 
@@ -299,6 +340,7 @@ int main() {
 	DWORD pid = GetCurrentProcessId(), tick = GetTickCount();
     srand(pid ^ tick);
     CALC_WINDOW calc(1000, 600);
-    calc.run();
+    calc.run_async();
+    calc.join();
     return 0;
 }
