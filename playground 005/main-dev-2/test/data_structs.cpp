@@ -1,13 +1,10 @@
-#ifndef _WINDOWS_
-	#define WIN32_LEAN_AND_MEAN
-	#define NOMINMAX
-	#define _GNU_SOURCE
-	#include <windows.h>
-#endif
-#include <stdint.h>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <windows.h>
 
-#define exchange(A, B) auto __swap_temp = A; A = B; B = __swap_temp;
 
 template <typename TYPE_VAL>
 struct HASH_ENTRY {
@@ -23,6 +20,7 @@ struct HASH_DICT {
 	static constexpr float redundant = 1.5f;
 	HASH_DICT(size_t __max_entries, size_t __max_storage): storage_counter(0), entry_counter(0),
 			max_entries(size_t(__max_entries * redundant)) {
+		wprintf(L"Max entries: %d -> %d\n", __max_entries, max_entries);
 		strs = (wchar_t*)malloc(__max_storage * sizeof(wchar_t)
 			+ max_entries * (sizeof(HASH_ENTRY<TYPE_VAL>) + sizeof(HASH_ENTRY<TYPE_VAL>*)));
 		entries = (HASH_ENTRY<TYPE_VAL>*)(strs + __max_storage); last_entry = entries;
@@ -76,19 +74,27 @@ struct HASH_DICT {
 		wchar_t* KEY = DICT.enum_targets[__enum_v]->key;
 #define end_enum }
 
-constexpr BYTE _0b(const char* bin_str) {
-	BYTE n = 0;
-	for (BYTE i = 0; bin_str[i] != '\0'; i++) n = (n << 1) + (bin_str[i] - '0');
-	return n;
+void printk(HASH_DICT<int>* d, const wchar_t* key) {
+	int* result;
+	if (d->get(key, &result)) wprintf(L"%ls: %d\n", key, *result);
+	else wprintf(L"%ls: Not found\n", key);
 }
-
-struct BIT_FIELD {
-	BYTE field = 0;
-	inline void set(BYTE bit) { field |= 1 << bit; }
-	inline void set4(bool b_0, bool b_1, bool b_2, bool b_3) { // low -> high
-		field = (b_3 << 3) | (b_2 << 2) | (b_1 << 1) | b_0;
-	}
-	inline BYTE get(BYTE bit) { return field & (1 << bit); }
-	inline bool get_strict(BYTE bit) { return get(bit) >> bit; }
-};
-
+int main() {
+	HASH_DICT<int> d(10, 100);
+	d.str_hash(L"12345678");
+	d.add(L"123", 123);
+	d.add(L"456", 456);
+	d.add(L"789", 789);
+	d.add(L"very very long name", 114514);
+	for (int i = 0; i < d.storage_counter; i++) wprintf(L"%lc", (d.strs[i] == L'\0') ? L'~' : d.strs[i]);
+	wprintf(L"\n");
+	printk(&d, L"123");
+	printk(&d, L"456");
+	printk(&d, L"789");
+	printk(&d, L"very very long name");
+	printk(&d, L"undefined");
+	enum_dict(d, int, name, arg)
+		printf("%ls: %d\n", name, arg);
+	end_enum
+	return 0;
+}

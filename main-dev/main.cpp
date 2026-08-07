@@ -3,20 +3,9 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
-// #include <math.h>
 
 // #define __JIT_DEBUG
 #include "jit.h"
-/*
-HANDLE __g_hheap = GetProcessHeap();
-typedef float (*func2F_F)(float, float);
-
-float ftest(float x, float y) {
-	// return y * sinf(x) - x * cosf(y) - 1.f;
-	// return x*x*x - y*y*y + 6.f*x*y;
-	return x * sinf(x) - y * sinf(y);
-}
-*/
 #include "cyxlib.h"
 
 
@@ -50,15 +39,15 @@ struct RENDER_FUNC_INFO {
 	float    magnify;
 	BYTE     max_depth;
 };
-inline LINEF march_map(BIT_FIELD key, bool* found) {
-	*found = 1;
-	switch (key.field) {
-		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
-		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
-		case _0b("1000"): case _0b("0111"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
-		case _0b("1011"): case _0b("0100"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
-		case _0b("1101"): case _0b("0010"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
-		case _0b("1110"): case _0b("0001"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
+inline LINEF march_map(BIT_FIELD key, bool* found) { // O-------> x
+	*found = 1;                                      // |  [0] [1]
+	switch (key.field) {                             // |y [2] [3]
+		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } }; // ---
+		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } }; //  |
+		case _0b("1000"): case _0b("0111"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } }; // [3]
+		case _0b("1011"): case _0b("0100"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } }; // [2]
+		case _0b("1101"): case _0b("0010"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } }; // [1]
+		case _0b("1110"): case _0b("0001"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } }; // [0]
 		case _0b("1001"): {
 			if (key.get(5)) return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
             return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
@@ -103,7 +92,6 @@ void march_9_grid(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step, 
 		march_9_grid(info, { start.x,   mid.y }, { mid.x, end.y }, step, _4_vals_new, depth);
 	}
 }
-
 void render_func(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step) {
 	size_t line_size = size_t((end.x - start.x) / step) + 1;
 	bool* march_buffer_1 = (bool*)__builtin_alloca(line_size * (sizeof(bool) * 2 + sizeof(float)));
@@ -131,27 +119,38 @@ void render_func(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step) {
 
 namespace CALC {
 	const UINT_PTR TIMER_RESIZE_BUFFER = 1;
-	const UINT TIMER_RESIZE_BUFFER_DELAY = 10000, EXTERNAL_EXIT = 0x12345678;
+	const UINT TIMER_RESIZE_BUFFER_DELAY = 10000, TIMER_WAIT_READY_TIMEOUT = 10, EXTERNAL_EXIT = 0x12345678;
 	const float BUFFER_OVERSIZE = 1.5f;
+	const bool NOT_STARTED = 1, SYNC = 2, ASYNC = 3, ASYNC_STARTING = 4;
 }
 struct CALC_WINDOW {
-	HWND        window_hwnd;
-	int32_t     window_size_x, window_size_y;
-	BYTE*       window_buffer;
-	SIZE_T      window_buffer_xy;
-	HDC         window_hDC, window_hmemDC;
-	HBITMAP     window_hBMP;
-	BITMAPINFO  window_BMI;
-	PAINTSTRUCT window_PS;
-	HANDLE      hmainthread;
-	CALC_WINDOW(int32_t __window_size_x, int32_t __window_size_y): window_hwnd(NULL), window_buffer(NULL),
-			hmainthread(NULL), window_size_x(__window_size_x), window_size_y(__window_size_y), window_buffer_xy(0) {
+	HWND             window_hwnd;
+	int32_t          window_size_x, window_size_y;
+	BYTE*            window_buffer;
+	SIZE_T           window_buffer_xy;
+	HDC              window_hDC, window_hmemDC;
+	HBITMAP          window_hBMP;
+	BITMAPINFO       window_BMI;
+	PAINTSTRUCT      window_PS;
+	HANDLE           hmainthread, hreadyevent;
+	EXPR_COMPILER    compiler;
+	RENDER_FUNC_INFO render_info;
+	BYTE             state;
+	CALC_WINDOW(int32_t __window_size_x, int32_t __window_size_y, EXPR_COMPILER_INFO* __compiler_info):
+			window_hwnd(NULL), window_buffer(NULL), hmainthread(NULL), compiler(__compiler_info),
+			state(CALC::NOT_STARTED), hreadyevent(CreateEvent(NULL, FALSE, FALSE, NULL)),
+			window_size_x(__window_size_x), window_size_y(__window_size_y), window_buffer_xy(0) {
 		ZeroMemory(&window_BMI, sizeof(BITMAPINFO));
     	window_BMI.bmiHeader.biSize   = sizeof(BITMAPINFOHEADER);
     	window_BMI.bmiHeader.biWidth  =  __window_size_x; window_BMI.bmiHeader.biHeight   = -__window_size_y;
 		window_BMI.bmiHeader.biPlanes = 1;                window_BMI.bmiHeader.biBitCount = 32;
     	window_BMI.bmiHeader.biCompression = BI_RGB;
     	window_BMI.bmiHeader.biSizeImage   = window_size_x * window_size_y * 4;
+	}
+	~CALC_WINDOW() {
+		async_exit(0);
+		if (hreadyevent != NULL) CloseHandle(hreadyevent);
+		hreadyevent = NULL;
 	}
 	static LRESULT CALLBACK __calc_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 		CALC_WINDOW* pthis = NULL;
@@ -251,36 +250,6 @@ struct CALC_WINDOW {
 		window_buffer_xy = (SIZE_T)window_size_x * window_size_y;
 		window_buffer = (BYTE*)HeapAlloc(__g_hheap, 0, window_buffer_xy * 4);
 		ZeroMemory(window_buffer, window_buffer_xy * 4);
-		{
-			RENDER_FUNC_INFO info;
-			info.bmp = window_buffer;
-			info.bmp_x = window_size_x;
-			info.color = BGRA{ 0, 255, 0 };
-			info.magnify = 40.f;
-			info.max_depth = 4;
-			info.range = RECT{ 0, 0, window_size_x, window_size_y };
-			info.offset = POINT{ window_size_x >> 1, window_size_y >> 1};
-
-			EXPR_COMPILER_INFO compiler_info = {
-				.max_tokens = 256,
-				.max_vars = 64,
-				.max_consts = 16,
-				.max_funcs = 32,
-				.code_size = 256,
-				.stack_size = 256,
-				.external_env = NULL
-			};
-			EXPR_COMPILER compiler(&compiler_info);
-
-			// BYTE result = compiler.compile_expr("x - y");
-			// BYTE result = compiler.compile_expr("x * sin(x) - y * sin(y)");
-			BYTE result = compiler.compile_expr("x * x * x - (y * y * y) + (6 * x * y)");
-			if (result == JIT::PASS) {
-				info.func = compiler.main_executable;
-				// info.func = ftest;
-				render_func(&info, { -15.f, -10.f }, { 15.f, 10.f }, .5f);
-			} else wprintf(L"Error: %ls\n", __g_error_str);
-		}
 		wchar_t randname[256];
     	__randname(randname, L"CYX_CALC_", 255);
     	WNDCLASSW wc = { 0 };
@@ -296,22 +265,54 @@ struct CALC_WINDOW {
 		window_hDC = GetDC(window_hwnd);
     	ShowWindow(window_hwnd, SW_SHOW);
     	MSG msg;
+    	if (state == CALC::ASYNC_STARTING) {
+    		state = CALC::ASYNC;
+    		SetEvent(hreadyevent);
+		} else state = CALC::SYNC;
     	while (GetMessage(&msg, NULL, 0, 0)) {
         	TranslateMessage(&msg);
         	DispatchMessage (&msg);
     	}
     	window_hwnd = NULL;
     	HeapFree(__g_hheap, 0, window_buffer);
+    	window_buffer = NULL;
+    	state = CALC::NOT_STARTED;
     	return msg.wParam;
 	}
-	void run_async() { hmainthread = CreateThread(NULL, 0, __calc_loop, this, 0, NULL); }
-	void join() {
+	BYTE ui_render_func(const char* expr) {
+		if (window_buffer == NULL) {
+			__report_error(L"Invalid window buffer");
+			return BYTE(JIT::I_DONT_CARE);
+		}
+		render_info.bmp = window_buffer;
+		render_info.bmp_x = window_size_x;
+		render_info.color = BGRA{ 0, 255, 0 };
+		render_info.magnify = 40.f;
+		render_info.max_depth = 4;
+		render_info.range = RECT{ 0, 0, window_size_x, window_size_y };
+		render_info.offset = POINT{ window_size_x >> 1, window_size_y >> 1};
+		compiler.cleanup();
+		BYTE result = compiler.compile_expr(expr);
+		if (result == JIT::PASS) {
+			render_info.func = compiler.main_executable;
+			// info.func = ftest;
+			render_func(&render_info, POINTF{ -15.f, -10.f }, POINTF{ 15.f, 10.f }, .5f);
+		}
+		return result;
+	}
+	void async_wait_ready() { WaitForSingleObject(hreadyevent, CALC::TIMER_WAIT_READY_TIMEOUT); }
+	void async_run(bool wait_ready = 0) {
+		state = CALC::ASYNC_STARTING;
+		hmainthread = CreateThread(NULL, 0, __calc_loop, this, 0, NULL);
+		if (wait_ready) async_wait_ready();
+	}
+	void async_join() {
 		if (hmainthread == NULL) return;
 		WaitForSingleObject(hmainthread, INFINITE);
         CloseHandle(hmainthread);
         hmainthread = NULL;
 	}
-	bool isrunning() {
+	bool async_running() {
 		if (WaitForSingleObject(hmainthread, 0) == WAIT_OBJECT_0) {
 			if (hmainthread != NULL) {
 				CloseHandle(hmainthread);
@@ -321,11 +322,12 @@ struct CALC_WINDOW {
 		}
 		return 1;
 	}
-	void exit(bool force) {
+	void async_exit(bool force) {
         if (hmainthread == NULL) return;
         if (force) TerminateProcess(hmainthread, CALC::EXTERNAL_EXIT);
         else if (window_hwnd != NULL) PostMessage(window_hwnd, WM_CLOSE, 0, 0);
-        join();
+        async_join();
+        state = CALC::NOT_STARTED;
     }
     void update() {
 		if (window_hwnd != NULL) {
@@ -339,8 +341,19 @@ struct CALC_WINDOW {
 int main() {
 	DWORD pid = GetCurrentProcessId(), tick = GetTickCount();
     srand(pid ^ tick);
-    CALC_WINDOW calc(1000, 600);
-    calc.run_async();
-    calc.join();
+    EXPR_COMPILER_INFO compiler_info = {
+		.max_tokens = 256,
+		.max_vars = 64,
+		.max_consts = 16,
+		.max_funcs = 32,
+		.code_size = 256,
+		.stack_size = 256,
+		.external_env = NULL
+	};
+    CALC_WINDOW calc(1000, 600, &compiler_info);
+    calc.async_run(1);
+    calc.ui_render_func("(x*x*x) - (y*y*y) + (6*x*y)");
+    calc.update();
+    calc.async_join();
     return 0;
 }

@@ -5,12 +5,12 @@
 #include <stdio.h>
 #include <math.h>
 
-//#define __JIT_DEBUG
+#define __JIT_DEBUG
 //#include "jit.h"
 HANDLE __g_hheap = GetProcessHeap();
 typedef float (*func2F_F)(float, float);
 float ftest(float x, float y) {
-	return y * sinf(x) - x * cosf(y) - 1.f;
+	return sinf(x) - y;
 }
 #include "cyxlib.h"
 
@@ -22,29 +22,15 @@ inline void dot(POINT pos, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
 	if (range.left <= pos.x && pos.x < range.right && range.top <= pos.y && pos.y < range.bottom)
 		((BGRA*)bmp)[pos.y * bmp_x + pos.x] = color;
 }
-/*
 void straight(POINT p_1, POINT p_2, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
-	POINT delta = { abs(p_2.x - p_1.x), -abs(p_2.y - p_1.y) },
+	POINT delta = { abs(p_2.x - p_1.x), abs(p_2.y - p_1.y) },
 		op = { (p_1.x < p_2.x) ? 1 : -1, (p_1.y < p_2.y) ? 1 : -1 };
-	int32_t err = delta.x + delta.y, steps = 0;
-    while (steps++ < 100) {
-        dot(p_1, color, bmp, bmp_x, range);
-        if (((p_1.x ^ p_2.x) | (p_1.y ^ p_2.y)) == 0) return;
-        if ((err << 1) > delta.y) { err += delta.y; p_1.x += op.x; }
-		if ((err << 1) < delta.x) { err += delta.x; p_1.y += op.y; }
-    }
-	printf("p_1(%d, %d), p_2(%d, %d)\n", p_1.x, p_1.y, p_2.x, p_2.y);
-}*/
-void straight(POINT p_1, POINT p_2, BGRA color, BYTE* bmp, int32_t bmp_x, RECT range) {
-    int32_t dx = abs(p_2.x - p_1.x), sx = p_1.x < p_2.x ? 1 : -1;
-    int32_t dy = -abs(p_2.y - p_1.y), sy = p_1.y < p_2.y ? 1 : -1;
-    int32_t err = dx + dy, e2;
+	int32_t err = delta.x - delta.y;
     while (1) {
         dot(p_1, color, bmp, bmp_x, range);
-        if (p_1.x == p_2.x && p_1.y == p_2.y) break;
-        e2 = err << 1;
-        if (e2 >= dy) { err += dy; p_1.x += sx; }
-        if (e2 <= dx) { err += dx; p_1.y += sy; }
+        if (((p_1.x ^ p_2.x) | (p_1.y ^ p_2.y)) == 0) break;
+        if ((err << 1) > -delta.y) { err -= delta.y; p_1.x += op.x; }
+		if ((err << 1) <  delta.x) { err += delta.x; p_1.y += op.y; }
     }
 }
 
@@ -61,32 +47,12 @@ struct RENDER_FUNC_INFO {
 inline LINEF march_map(BIT_FIELD key, bool* found) {
 	*found = 1;
 	switch (key.field) {
-  		/*
 		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
 		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
 		case _0b("1000"): case _0b("0111"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
 		case _0b("1011"): case _0b("0100"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
 		case _0b("1101"): case _0b("0010"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
 		case _0b("1110"): case _0b("0001"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
-		*/
-		/*
-		case 0x0C: case 0x03: return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
-		case 0x0A: case 0x05: return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
-		case 0x08: case 0x07: return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
-		case 0x0B: case 0x04: return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
-		case 0x0D: case 0x02: return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
-		case 0x0E: case 0x01: return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
-		*/
-		case _0b("1100"): case _0b("0011"): return { { 0.0f, 0.5f }, { 1.0f, 0.5f } };
-		case _0b("1010"): case _0b("0101"): return { { 0.5f, 0.0f }, { 0.5f, 1.0f } };
-		// case _0b("1000"): case _0b("0111"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
-		// case _0b("1011"): case _0b("0100"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
-		case _0b("1000"): case _0b("0111"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
-		case _0b("1011"): case _0b("0100"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
-		// case _0b("1101"): case _0b("0010"): return { { 0.0f, 0.5f }, { 0.5f, 1.0f } };
-		// case _0b("1110"): case _0b("0001"): return { { 0.5f, 1.0f }, { 1.0f, 0.5f } };
-		case _0b("1101"): case _0b("0010"): return { { 0.5f, 0.0f }, { 1.0f, 0.5f } };
-		case _0b("1110"): case _0b("0001"): return { { 0.0f, 0.5f }, { 0.5f, 0.0f } };
 	}
 	*found = 0;
 	return { 0 };
@@ -96,7 +62,7 @@ void march_9_grid(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step, 
 	bool found;
 	LINEF march = march_map(_4_vals, &found);
 	if (!found) return;
-	if (depth >= info->max_depth) {
+	if (depth == info->max_depth) {
 		POINT p_1 = {
 			int32_t((start.x + march.S.x * step) * info->magnify) + info->offset.x,
 			int32_t((start.y + march.S.y * step) * info->magnify) + info->offset.y
@@ -123,7 +89,6 @@ void march_9_grid(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step, 
 		march_9_grid(info, { start.x,   mid.y }, { mid.x, end.y }, step, _4_vals_new, depth);
 	}
 }
-
 void render_func(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step) {
 	size_t line_size = size_t((end.x - start.x) / step) + 1;
 	bool* march_buffer_1 = (bool*)__builtin_alloca(line_size * (sizeof(bool) * 2 + sizeof(float)));
@@ -136,12 +101,12 @@ void render_func(RENDER_FUNC_INFO* info, POINTF start, POINTF end, float step) {
 	size_t column_size = size_t((end.y - start.y) / step) + 1;
 	float last_y = start.y, current_y = start.y + step;
 	for (int32_t y = 1; y <= column_size; /* ++y's @ the end of the loop */ ) {
-		march_buffer_1[0] = info->func(start.x, current_y) > 0;
+		march_buffer_1[0] = info->func(start.x, current_y);
 		for (int32_t x = 1; x <= line_size; x++) {
 			march_buffer_1[x] = info->func(float_x_cache[x], current_y) > 0;
 			BIT_FIELD _4_vals;
 			_4_vals.set4(march_buffer_2[x - 1], march_buffer_2[x], march_buffer_1[x - 1], march_buffer_1[x]);
-			march_9_grid(info, { float_x_cache[x - 1], last_y }, { float_x_cache[x], current_y }, step, _4_vals, 0);
+			march_9_grid(info, { float_x_cache[x - 1], last_y }, { float_x_cache[x], current_y }, step,_4_vals, 0);
 		}
 		last_y = current_y;
 		current_y = start.y + step * (++y);
@@ -279,8 +244,8 @@ struct CALC_WINDOW {
 			info.bmp = window_buffer;
 			info.bmp_x = window_size_x;
 			info.color = BGRA{ 0, 255, 0 };
-			info.magnify = 40.f;
-			info.max_depth = 3;
+			info.magnify = 10.f;
+			info.max_depth = 4;
 			info.range = RECT{ 0, 0, window_size_x, window_size_y };
 			info.offset = POINT{ window_size_x >> 1, window_size_y >> 1};
 			/*
@@ -299,7 +264,7 @@ struct CALC_WINDOW {
 			//if (result == JIT::PASS) {
 				//info.func = compiler.main_executable;
 				info.func = ftest;
-				render_func(&info, { -15.f, -10.f }, { 15.f, 10.f }, .5f);
+				render_func(&info, { -10.f, -10.f }, { 10.f, 10.f }, 1.f);
 			//} else wprintf(L"Error: %ls\n", __g_error_str);
 		}
 		wchar_t randname[256];
@@ -330,7 +295,7 @@ struct CALC_WINDOW {
 int main() {
 	DWORD pid = GetCurrentProcessId(), tick = GetTickCount();
     srand(pid ^ tick);
-    CALC_WINDOW calc(1000, 600);
+    CALC_WINDOW calc(400, 300);
     calc.run();
     return 0;
 }
