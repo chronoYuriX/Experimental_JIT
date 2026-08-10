@@ -879,8 +879,16 @@ struct EXPR_COMPILER {
 	}
 	void cleanup() {
 		main_executable = NULL;
+		vars.stEXEmem.counter = 0;
 		tokens.counter     = 0; consts.counter     = 0; code.counter     = 0;
 		vars.const_counter = 0; vars.stack_counter = 0; vars.var_counter = 2;
+		using namespace JIT;
+		vars.vars[0].state = vars.vars[1].state = AT_REG;
+		vars.vars[0].regID = 0; vars.vars[1].regID = 1;
+		vars.vars[0].stackID = vars.vars[1].stackID = I_DONT_CARE;
+		vars.regs[0] = vars.regs[1] = OCCUPIED;
+		memset(vars.regs + 2, FREE, MAX_REGS - 2);
+		stackOP(vars.stEXEmem, ALLOC, vars.stack_size);
 	}
 	inline float run(float x, float y) { return main_executable(x, y); }
 };
@@ -960,6 +968,7 @@ int main() {
 	else wprintf(L"Error: %ls\n", __g_error_str);
 	compiler.config(L"a", 3.f);
 	if (result == JIT::PASS) wprintf(L"result: %.2f (expect 9.00)\n", compiler.run(2.f, 16.f));
+
 
 	compiler.cleanup();
 	result = compiler.compile_expr(L"(y * sin(x)) - (x * cos(y)) - 1");

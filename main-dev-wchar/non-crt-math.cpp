@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <memory.h>
 
+#define NCM_API __attribute__((used, noinline))
+
 #ifndef __NCM_NO_PACKING
 namespace NCM {
 #endif
@@ -13,17 +15,14 @@ bool isnan(float f) {
     uint32_t i = *(uint32_t*)&f;
     return ((i >> 23) & 0xFF == 0xFF) && (i & 0x7FFFFF != 0);
 }
-
 bool isinf(float f) {
     uint32_t i = *(uint32_t*)&f;
     return ((i >> 23) & 0xFF == 0xFF) && (i & 0x7FFFFF == 0);
 }
-
 double split_double(double d, double* int_part) {
     *int_part = (int64_t)d;
     return d - *(double*)int_part;
 }
-
 float absf(float f) { return (f > 0) ? f : -f; }
 
 // --- 辅助常量 ---
@@ -48,7 +47,7 @@ static float poly_eval(float x, const float* coeffs, int n) {
 }
 
 // --- sinf：使用泰勒展开/切比雪夫逼近，范围 [-PI/2, PI/2] ---
-float sinf(float f) {
+NCM_API float sinf(float f) {
     // 先归约到 [-PI, PI]
     f = reduce_to_pi(f);
     // 进一步归约到 [-PI/2, PI/2]，利用 sin(-x) = -sin(x), sin(PI-x) = sin(x)
@@ -70,12 +69,12 @@ float sinf(float f) {
 }
 
 // --- cosf：cos(x) = sin(PI/2 - x) ---
-float cosf(float f) {
+NCM_API float cosf(float f) {
     return sinf(HALF_PI - f);
 }
 
 // --- tanf：tan(x) = sin(x) / cos(x) ---
-float tanf(float f) {
+NCM_API float tanf(float f) {
     float s = sinf(f);
     float c = cosf(f);
     if (c == 0.0f) return INF;
@@ -83,28 +82,28 @@ float tanf(float f) {
 }
 
 // --- cotf：cot(x) = 1/tan(x) ---
-float cotf(float f) {
+NCM_API float cotf(float f) {
     float t = tanf(f);
     if (t == 0.0f) return INF;
     return 1.0f / t;
 }
 
 // --- cscf：csc(x) = 1/sin(x) ---
-float cscf(float f) {
+NCM_API float cscf(float f) {
     float s = sinf(f);
     if (s == 0.0f) return INF;
     return 1.0f / s;
 }
 
 // --- secf：sec(x) = 1/cos(x) ---
-float secf(float f) {
+NCM_API float secf(float f) {
     float c = cosf(f);
     if (c == 0.0f) return INF;
     return 1.0f / c;
 }
 
 // --- 辅助：求自然对数，使用浮点数分解 + 多项式逼近 ---
-float logf(float f) {
+NCM_API float logf(float f) {
     if (f <= 0.0f) return NAN;
     if (isinf(f)) return INF;
     if (f == 1.0f) return 0.0f;
@@ -126,14 +125,14 @@ float logf(float f) {
 }
 
 // --- logf2：以任意底数的对数 ---
-float logf2(float base, float mantissa) {
+NCM_API float logf2(float base, float mantissa) {
     if (base <= 0.0f || base == 1.0f || mantissa <= 0.0f) return NAN;
     return logf(mantissa) / logf(base);
 }
 
 // --- 双曲函数：使用指数定义 ---
 // 辅助：exp(x)，使用泰勒展开
-static float expf_custom(float x) {
+NCM_API static float expf_custom(float x) {
     if (isinf(x)) return (x > 0) ? INF : 0.0f;
     // 将 x 分解为整数部分和小数部分
     float xi = (float)(int)x;
@@ -152,38 +151,38 @@ static float expf_custom(float x) {
     return result * e_pow_int;
 }
 
-float sinhf(float f) {
+NCM_API float sinhf(float f) {
     float e_x = expf_custom(f);
     float e_nx = 1.0f / e_x;
     return (e_x - e_nx) * 0.5f;
 }
 
-float coshf(float f) {
+NCM_API float coshf(float f) {
     float e_x = expf_custom(f);
     float e_nx = 1.0f / e_x;
     return (e_x + e_nx) * 0.5f;
 }
 
-float tanhf(float f) {
+NCM_API float tanhf(float f) {
     float sh = sinhf(f);
     float ch = coshf(f);
     if (ch == 0.0f) return (sh > 0) ? INF : -INF;
     return sh / ch;
 }
 
-float cothf(float f) {
+NCM_API float cothf(float f) {
     float th = tanhf(f);
     if (th == 0.0f) return INF;
     return 1.0f / th;
 }
 
-float cschf(float f) {
+NCM_API float cschf(float f) {
     float sh = sinhf(f);
     if (sh == 0.0f) return INF;
     return 1.0f / sh;
 }
 
-float sechf(float f) {
+NCM_API float sechf(float f) {
     float ch = coshf(f);
     if (ch == 0.0f) return INF;
     return 1.0f / ch;
@@ -204,9 +203,9 @@ static float sqrtf_custom(float x) {
     return guess;
 }
 
-float atanf(float f);
+NCM_API float atanf(float f);
 // asinf：asin(x) = arctan(x / sqrt(1 - x2))
-float asinf(float f) {
+NCM_API float asinf(float f) {
     if (f < -1.0f || f > 1.0f) return NAN;
     if (f == 1.0f) return HALF_PI;
     if (f == -1.0f) return -HALF_PI;
@@ -214,12 +213,12 @@ float asinf(float f) {
 }
 
 // acosf：acos(x) = PI/2 - asin(x)
-float acosf(float f) {
+NCM_API float acosf(float f) {
     return HALF_PI - asinf(f);
 }
 
 // atanf：使用切比雪夫逼近
-float atanf(float f) {
+NCM_API float atanf(float f) {
     if (isinf(f)) return (f > 0) ? HALF_PI : -HALF_PI;
     // 利用 atan(-x) = -atan(x)
     int sign = 1;
@@ -235,24 +234,24 @@ float atanf(float f) {
 }
 
 // acotf：acot(x) = PI/2 - atan(x)
-float acotf(float f) {
+NCM_API float acotf(float f) {
     return HALF_PI - atanf(f);
 }
 
 // acscf：acsc(x) = asin(1/x)
-float acscf(float f) {
+NCM_API float acscf(float f) {
     if (f == 0.0f) return NAN;
     return asinf(1.0f / f);
 }
 
 // asecf：asec(x) = acos(1/x)
-float asecf(float f) {
+NCM_API float asecf(float f) {
     if (f == 0.0f) return NAN;
     return acosf(1.0f / f);
 }
 
 // --- powf：x^y = e^(y * ln(x)) ---
-float powf(float base, float exponent) {
+NCM_API float powf(float base, float exponent) {
     if (base < 0 && exponent != (int)exponent) return NAN;  // 负数的小数次幂无定义
     if (base == 0.0f && exponent <= 0) return NAN;
     if (base == 0.0f) return 0.0f;
@@ -267,7 +266,7 @@ float powf(float base, float exponent) {
 }
 
 // --- facf：阶乘（Gamma函数近似，只支持整数）---
-float facf(float f) {
+NCM_API float facf(float f) {
     if (f < 0.0f) return NAN;
     int n = (int)f;
     if (f != (float)n) return NAN;  // 非整数暂不支持

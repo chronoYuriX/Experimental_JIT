@@ -74,6 +74,11 @@ struct HASH_DICT {
 		wchar_t* KEY = DICT.enum_targets[__enum_v]->key;
 #define end_enum }
 
+struct INPUT_STRING {
+	wchar_t* str;
+	size_t length;
+	INPUT_STRING
+};
 void printk(HASH_DICT<int>* d, const wchar_t* key) {
 	int* result;
 	if (d->get(key, &result)) wprintf(L"%ls: %d\n", key, *result);

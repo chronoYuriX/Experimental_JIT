@@ -301,14 +301,14 @@ struct CALC_WINDOW {
     	state = CALC::NOT_STARTED;
     	return msg.wParam;
 	}
-	BYTE ui_render_func(const wchar_t* expr) {
+	BYTE ui_render_func(const wchar_t* expr, BGRA color) {
 		if (window_buffer == NULL) {
 			__report_error(L"Invalid window buffer");
 			return BYTE(JIT::I_DONT_CARE);
 		}
 		render_info.bmp = window_buffer;
 		render_info.bmp_x = window_size_x;
-		render_info.color = BGRA{ 0, 255, 0 };
+		render_info.color = color;
 		render_info.magnify = 40.f;
 		render_info.max_depth = 4;
 		render_info.range = RECT{ window_input_size, window_toolbar_size, window_size_x, window_size_y };
@@ -349,6 +349,7 @@ struct CALC_WINDOW {
         hmainthread = NULL;
 	}
 	bool async_running() {
+		if (hmainthread == NULL) return 0;
 		if (WaitForSingleObject(hmainthread, 0) == WAIT_OBJECT_0) {
 			if (hmainthread != NULL) {
 				CloseHandle(hmainthread);
@@ -389,8 +390,9 @@ int main() {
     CALC_WINDOW calc(1000, 600, &compiler_info);
     calc.async_run(1);
     calc.ui_render_frame();
-    calc.ui_render_func(L"(x*x*x) - (y*y*y) + (6*x*y)");
-	//calc.ui_render_func(L"log(2, x) - y");
+    calc.ui_render_func(L"(x*x*x) - (y*y*y) + (6*x*y)", gradientRGB(0));
+	calc.ui_render_func(L"x^.5-y", gradientRGB(300));
+	calc.ui_render_func(L"log(2, x) - y", gradientRGB(600));
     calc.update();
     calc.async_join();
     return 0;
