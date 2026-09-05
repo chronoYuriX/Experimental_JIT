@@ -125,6 +125,11 @@ struct float_pair {
 	float_pair(float _x, float _y): x(_x), y(_y) { }
 	float_pair() = default;
 };
+struct float_tri {
+	float x, y, z;
+	float_tri(float _x, float _y, float _z): x(_x), y(_y), z(_z) { }
+	float_tri() = default;
+};
 
 GLuint create_BGRA_texture(SIZE size, BYTE* img_data) {
 	GLuint textureID;
@@ -193,7 +198,7 @@ struct GL_CHARSET {
 	DICT<wchar_t, GL_CHAR*> chars;
 	uint16_t scan_counter, scan_cycle, char_lifespan;
 	static constexpr uint16_t NEVER_SCAN = ~0, ETERNAL_LIFE = ~0;
-	GL_CHARSET(uint16_t _scan_cycle = 60, uint16_t _char_lifespan = 10): scan_counter(0), char_lifespan(_char_lifespan), chars(64, 1.5f, .5f, _g_hheap) {
+	GL_CHARSET(uint16_t _scan_cycle = 30, uint16_t _char_lifespan = 10): scan_counter(0), char_lifespan(_char_lifespan), chars(64, 1.5f, .5f, _g_hheap) {
 		scan_cycle = (_char_lifespan == ETERNAL_LIFE) ? NEVER_SCAN : _scan_cycle;
 	}
 	static bool enum_deconstruct(DICT_ENTRY<wchar_t, GL_CHAR*>* current_entry, void* ) {
@@ -211,7 +216,7 @@ struct GL_CHARSET {
 	}
 	~GL_CHARSET() { chars.enum_entries(enum_deconstruct, nullptr); }
 	int32_t draw(POINT point00, wchar_t key, HDC htextDC) {
-		if (scan_cycle != NEVER_SCAN && ++scan_counter >= scan_cycle) {
+		if (scan_cycle != NEVER_SCAN && scan_counter >= scan_cycle) {
 			scan_counter = 0;
 			chars.enum_entries(enum_age_increase, &char_lifespan);
 		}
@@ -225,6 +230,7 @@ struct GL_CHARSET {
 		(*result)->draw(point00);
 		return (*result)->original_size.cx;
 	}
+	inline void count_frame() { scan_counter++; }
 };
 
 struct GL_TEXT {
@@ -296,17 +302,23 @@ struct GL_TEXT {
 };
 
 struct GL_WINDOW {
-	HDC      hDC, htextDC;
-	HWND     hwnd;
-	HGLRC    hRC;
-	HFONT    hfont;
-	int32_t  window_size_x, window_size_y;
-	uint8_t  current_dimension;
+	HDC       hDC, htextDC;
+	HWND      hwnd;
+	HGLRC     hRC;
+	HFONT     hfont;
+	int32_t   window_size_x, window_size_y;
+	uint8_t   current_dimension;
+	float_tri cam3Dloc, cam3Drotate;
+	uint8_t   mouse_key_state;
+	POINT     mouse_down_pos, mouse_current_pos;
 	static constexpr uint16_t WINDOW_CLASSNAME_LEN = 256;
-	static constexpr wchar_t WINDOW_CLASSNAME_HEADER[] = L"CYX_GL_WINDOW_", WINDOW_TITLE[] = L"OpenGL Demo",
-		TEXT_DEFAULT[] = L"";
-	static constexpr double GL_VISION_NEAR = 1., GL_VISION_FAR = 100.;
+	static constexpr wchar_t  WINDOW_CLASSNAME_HEADER[] = L"CYX_GL_WINDOW_", WINDOW_TITLE[] = L"OpenGL Demo";
+	static constexpr double   GL_VISION_NEAR = 1., GL_VISION_FAR = 100.;
 	static constexpr COLORREF FONT_DEFAULT_COLOR = RGB(255, 255, 255);
+	static constexpr uint8_t // mouse event
+		MOUSE_LEFT_DOWN = 0x01, MOUSE_RIGHT_DOWN = 0x02, MOUSE_ACTION_LEFT_DOWN = 0x04, MOUSE_ACTION_RIGHT_DOWN = 0x08,
+		MOUSE_ACTION_LEFT_UP = 0x10, MOUSE_ACTION_RIGHT_UP = 0x20, MOUSE_ACTION_MOVE = 0x40, MOUSE_VALID_DOWN_POS = 0x80;
+	static constexpr UINT MESSAGE_RENDER = WM_USER + 1;
 	static constexpr PIXELFORMATDESCRIPTOR _create_PFD() {
 		PIXELFORMATDESCRIPTOR PFD = { 0 };
     	PFD.nSize = sizeof(PFD);
@@ -319,10 +331,11 @@ struct GL_WINDOW {
     	return PFD;
 	}
 	static constexpr LOGFONTW _create_default_logfont() {
+		constexpr wchar_t DEFAULT_FACENAME[] = L"Consolas";
 		LOGFONTW LF = { 0 };
 		LF.lfHeight = -12;
 		LF.lfCharSet = DEFAULT_CHARSET;
-		__builtin_memcpy(LF.lfFaceName, TEXT_DEFAULT, sizeof(TEXT_DEFAULT));
+		__builtin_memcpy(LF.lfFaceName, DEFAULT_FACENAME, sizeof(DEFAULT_FACENAME));
 		return LF;
 	}
 	LRESULT CALLBACK _window_proc_main(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -330,14 +343,45 @@ struct GL_WINDOW {
         	case WM_CREATE: break;
         	case WM_CLOSE: DestroyWindow(hwnd); break;
         	case WM_DESTROY: PostQuitMessage(0); break;
-        	case WM_SIZE: {
+        	case WM_LBUTTONDOWN: {
+        		mouse_key_state |= MOUSE_LEFT_DOWN | MOUSE_ACTION_LEFT_DOWN;
+				goto set_mouse_down_pos;
+			} case WM_LBUTTONUP: {
+				mouse_key_state &= ~MOUSE_LEFT_DOWN;
+				mouse_key_state |= MOUSE_ACTION_LEFT_UP;
+				goto remove_mouse_down_pos;
+			} case WM_RBUTTONDOWN: {
+        		mouse_key_state |= MOUSE_RIGHT_DOWN | MOUSE_ACTION_RIGHT_DOWN;
+				goto set_mouse_down_pos;
+			} case WM_RBUTTONUP: {
+				mouse_key_state &= ~MOUSE_RIGHT_DOWN;
+				mouse_key_state |= MOUSE_ACTION_RIGHT_UP;
+				goto remove_mouse_down_pos;
+			} case WM_MOUSEMOVE: {
+				mouse_key_state |= MOUSE_ACTION_MOVE;
+				if (mouse_key_state & (MOUSE_LEFT_DOWN | MOUSE_RIGHT_DOWN)) {
+					mouse_current_pos.x = LOWORD(lparam);
+					mouse_current_pos.y = HIWORD(lparam);
+					mouse_key_state |= MOUSE_VALID_DOWN_POS;
+				}
+				break;
+			} case WM_SIZE: {
         		if (wparam == SIZE_RESTORED || wparam == SIZE_MAXIMIZED || wparam == SIZE_MINIMIZED)
 					resize(LOWORD(lparam), HIWORD(lparam), 0);
 				break;
-			}
+			} case MESSAGE_RENDER: render_frame(); break;
         	default: return DefWindowProcW(hwnd, message, wparam, lparam);
     	}
     	return 0;
+    	set_mouse_down_pos:
+    		mouse_down_pos.x = LOWORD(lparam);
+			mouse_down_pos.y = HIWORD(lparam);
+			render_frame();
+		return 0;
+		remove_mouse_down_pos:
+			mouse_key_state &= ~MOUSE_VALID_DOWN_POS;
+			render_frame();
+		return 0;
 	}
 	static LRESULT CALLBACK _window_proc_wrapper(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 		GL_WINDOW* pthis = NULL;
@@ -414,11 +458,9 @@ struct GL_WINDOW {
     	SetTextColor(htextDC, FONT_DEFAULT_COLOR);
     	SetBkMode(htextDC, TRANSPARENT);
 	}
-	void _recover_font() {
-		DeleteObject(hfont);
-		ReleaseDC(NULL, htextDC);
-	}
-	GL_WINDOW(int32_t _size_x, int32_t _size_y): window_size_x(_size_x), window_size_y(_size_y), current_dimension(3) {
+	GL_WINDOW(int32_t _size_x, int32_t _size_y): // setup
+			window_size_x(_size_x), window_size_y(_size_y),
+			current_dimension(3), cam3Dloc(0.f, 0.f, 0.f), cam3Drotate(0.f, 0.f, 0.f) {
 		_create_window();
 		PIXELFORMATDESCRIPTOR PFD = _create_PFD();
 		int32_t formatID = ChoosePixelFormat(hDC, &PFD);
@@ -451,12 +493,23 @@ struct GL_WINDOW {
     	glMatrixMode(GL_MODELVIEW);
     	glLoadIdentity();
     	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    	_init_font();
+		_init_font();
 	}
 	~GL_WINDOW() {
 		wglMakeCurrent(NULL, NULL);
     	wglDeleteContext(hRC);
-    	_recover_font();
+    	DeleteObject(hfont);
+		ReleaseDC(NULL, htextDC);
+	}
+	void calibrate_mouse() {
+		mouse_key_state = 0;
+		if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) mouse_key_state |= MOUSE_LEFT_DOWN;
+		if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) mouse_key_state |= MOUSE_RIGHT_DOWN;
+		if (mouse_key_state & (MOUSE_LEFT_DOWN | MOUSE_RIGHT_DOWN)) {
+			DWORD pos = GetMessagePos();
+			mouse_down_pos.x = LOWORD(pos);
+			mouse_down_pos.y = HIWORD(pos);
+		}
 	}
 	void resize(int32_t _size_x, int32_t _size_y, bool isproactive) {
 		if (isproactive) SetWindowPos(hwnd, NULL, 0, 0, _size_x, _size_y, SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER);
@@ -490,19 +543,19 @@ struct GL_WINDOW {
     	glLoadIdentity();
     	current_dimension = dimension;
 	}
-	DWORD WINAPI mainloop() {
-		MSG msg;
-		/*
-		while (GetMessageW(&msg, NULL, 0, 0)) {
-        	TranslateMessage(&msg);
-        	DispatchMessageW(&msg);
-    	}
-		*/
+	struct FRAME_INFO {
 		float theta = 0.f;
 		int cnt = 0;
+		GL_CHARSET* charset;
+		GL_TEXT *text = nullptr, *text_replace = nullptr;
+	};
+	FRAME_INFO frame_info;
+	DWORD WINAPI mainloop() {
+		calibrate_mouse();
 		timeBeginPeriod(1);
+		MSG msg;
 		GL_CHARSET charset;
-		GL_TEXT *text, *text_replace;
+		frame_info.charset = &charset;
 		while (1) {
         	if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
             	if (msg.message == WM_QUIT) break;
@@ -511,56 +564,67 @@ struct GL_WINDOW {
         	    	DispatchMessageW(&msg);
         	    }
         	} else {
-        	    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        	    switch_dimension(3);
-        	    glTranslatef(0.f, 0.f, -8.f);
-        	    glRotatef(theta, .3f, 1.f, 0.f);
-        	    glBegin(GL_QUADS);
-					glColor3f(1.f, 0.f, 0.f); glVertex3f(-1.f,  1.f, 0.f);
-					glColor3f(0.f, 1.f, 0.f); glVertex3f( 1.f,  1.f, 0.f);
-					glColor3f(0.f, 0.f, 1.f); glVertex3f( 1.f, -1.f, 0.f);
-					glColor3f(0.f, 1.f, 0.f); glVertex3f(-1.f, -1.f, 0.f);
-        	    glEnd();
-
-        	    switch_dimension(2);
-        	    RECT text_range = RECT{ 20, 10, 120, 70 };
-        	    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-				if (cnt > 100) {
-					glEnable(GL_TEXTURE_2D);
-					text_replace->draw(POINT{ text_range.left, text_range.top }, &charset, htextDC);
-					glDisable(GL_TEXTURE_2D);
-				} else {
-					if (cnt == 100) text_replace = new GL_TEXT(L"A\nBC\nDEF", htextDC);
-					else if (cnt > 50) {
-						glEnable(GL_TEXTURE_2D);
-						text->draw(POINT{ text_range.left, text_range.top }, &charset, htextDC);
-						glDisable(GL_TEXTURE_2D);
-					} else if (cnt == 50) text = new GL_TEXT(L"ABCDEFGH", htextDC);
-					cnt++;
-				}
-
-        	    glLineWidth(1.5f);
-        	    glBegin(GL_LINE_LOOP);
-        			glColor3f(1.f, 1.f, 0.f);
-        			glVertex2i(text_range.left , text_range.top);
-        			glVertex2i(text_range.right, text_range.top);
-        			glVertex2i(text_range.right, text_range.bottom);
-        			glVertex2i(text_range.left , text_range.bottom);
-    			glEnd();
-
-        	    glFlush();
-    			SwapBuffers(hDC);
-        	    theta += .3f;
+        	    SendMessage(hwnd, MESSAGE_RENDER, 0, 0); // render_frame();
+        	    frame_info.theta += .3f;
+        	    charset.count_frame();
         	    Sleep(16);
         	}
     	}
-    	delete text;
+    	if (frame_info.text != nullptr) delete frame_info.text;
+    	if (frame_info.text_replace != nullptr) delete frame_info.text_replace;
     	timeEndPeriod(1);
+    	SendMessage(hwnd, WM_CLOSE, 0, 0);
     	ReleaseDC(hwnd, hDC);
-    	DestroyWindow(hwnd);
     	return msg.wParam;
+	}
+	void render_frame() {
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        switch_dimension(3);
+        glTranslatef(0.f, 0.f, -8.f);
+        glRotatef(frame_info.theta, .3f, 1.f, 0.f);
+        glBegin(GL_QUADS);
+			glColor4ub(255, 000, 000, 255); glVertex3f(-1.f,  1.f, 0.f);
+			glColor3ub(000, 255, 000); glVertex3f( 1.f,  1.f, 0.f);
+			glColor3ub(000, 000, 255); glVertex3f( 1.f, -1.f, 0.f);
+			glColor3ub(000, 255, 000); glVertex3f(-1.f, -1.f, 0.f);
+        glEnd();
+        switch_dimension(2);
+        RECT text_range = RECT{ 20, 10, 120, 70 };
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+		glColor4ub(255, 255, 255, 255);
+		if (frame_info.cnt > 100) {
+			glEnable(GL_TEXTURE_2D);
+			frame_info.text_replace->draw(POINT{ text_range.left, text_range.top }, frame_info.charset, htextDC);
+			glDisable(GL_TEXTURE_2D);
+		} else {
+			if (frame_info.cnt == 100) frame_info.text_replace = new GL_TEXT(L"A\nBC\nDEF", htextDC);
+			else if (frame_info.cnt > 50) {
+				glEnable(GL_TEXTURE_2D);
+				frame_info.text->draw(POINT{ text_range.left, text_range.top }, frame_info.charset, htextDC);
+				glDisable(GL_TEXTURE_2D);
+			} else if (frame_info.cnt == 50) frame_info.text = new GL_TEXT(L"ABCDEFGH", htextDC);
+			frame_info.cnt++;
+		}
+        glLineWidth(2.f);
+        glBegin(GL_LINE_LOOP);
+        	glColor4ub(255, 255, 000, 255);
+        	glVertex2i(text_range.left , text_range.top);
+        	glVertex2i(text_range.right, text_range.top);
+        	glVertex2i(text_range.right, text_range.bottom);
+        	glVertex2i(text_range.left , text_range.bottom);
+    	glEnd();
+    	if ((mouse_key_state & MOUSE_LEFT_DOWN) && (mouse_key_state & MOUSE_VALID_DOWN_POS)) {
+    		glLineWidth(2.f);
+    		glBegin(GL_LINE_LOOP);
+        		glColor4ub(255, 000, 000, 255); glVertex2i(   mouse_down_pos.x,    mouse_down_pos.y);
+        		glColor3ub(000, 255, 000); glVertex2i(mouse_current_pos.x,    mouse_down_pos.y);
+        		glColor3ub(255, 255, 000); glVertex2i(mouse_current_pos.x, mouse_current_pos.y);
+        		glColor3ub(000, 000, 255); glVertex2i(   mouse_down_pos.x, mouse_current_pos.y);
+    		glEnd();
+		}
+		mouse_key_state &= ~(MOUSE_ACTION_LEFT_DOWN | MOUSE_ACTION_RIGHT_DOWN | MOUSE_ACTION_LEFT_UP | MOUSE_ACTION_RIGHT_UP | MOUSE_ACTION_MOVE);
+        glFlush();
+    	SwapBuffers(hDC);
 	}
 };
 
